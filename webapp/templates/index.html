@@ -1,358 +1,480 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<title>Niche Finder — Chaînes découvertes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Niche Finder</title>
 <style>
   :root {
-    --bg: #0f1115;
-    --card-bg: #1a1d24;
-    --border: #2a2d35;
-    --text: #e8e8ea;
-    --muted: #9a9ca3;
+    --bg: #0e1014;
+    --surface: #171a21;
+    --surface-2: #1f232c;
+    --border: #2a2f3a;
+    --text: #eceef2;
+    --muted: #8f96a3;
     --accent: #f97316;
+    --accent-text: #111111;
     --green: #22c55e;
-    --orange: #eab308;
-    --gray: #6b7280;
-    --red: #ef4444;
     --blue: #3b82f6;
+    --amber: #eab308;
+    --red: #ef4444;
+    --radius: 12px;
+    --gap: 16px;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --surface-2: #eef0f3;
+    --border: #dcdfe5;
+    --text: #15181e;
+    --muted: #5d6573;
+    --accent-text: #ffffff;
   }
   * { box-sizing: border-box; }
   body {
+    margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
-    margin: 0;
-    padding: 24px;
-  }
-  h1 { font-size: 20px; margin-bottom: 20px; }
-  .tabs {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 10px;
-  }
-  .tab {
-    padding: 9px 16px;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--muted);
-  }
-  .tab.active-time {
-    background: var(--accent);
-    color: #0a0a0a;
-    border-color: var(--accent);
-  }
-  .tab.active-status {
-    background: var(--blue);
-    color: #fff;
-    border-color: var(--blue);
-  }
-  .controls {
-    display: flex;
-    gap: 12px;
-    margin: 16px 0 20px;
-    flex-wrap: wrap;
-  }
-  input, select {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 12px;
-    border-radius: 8px;
+    font-family: Inter, -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 14px;
+    line-height: 1.45;
   }
-  input { flex: 1; min-width: 200px; }
-  .count { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+
+  /* ---------- Barre du haut ---------- */
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: var(--accent); color: var(--accent-text);
+    display: grid; place-items: center;
+  }
+  .topbar-actions { display: flex; gap: 8px; }
+  .icon-btn {
+    min-width: 40px; height: 40px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 0 12px;
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    cursor: pointer; font-size: 13px; font-weight: 600; font-family: inherit;
+  }
+  .icon-btn:hover { border-color: var(--muted); }
+  #filters-toggle { display: none; }
+
+  /* ---------- Contenu ---------- */
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  .toolbar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 18px;
+  }
+  .seg-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
+  .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button {
+    min-height: 36px; padding: 0 14px;
+    background: transparent; color: var(--muted);
+    border: none; border-radius: 8px;
+    font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;
+  }
+  .seg button.active { background: var(--accent); color: var(--accent-text); }
+  .seg.status button.active { background: var(--blue); color: #fff; }
+  .field-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .field-row input, .field-row select {
+    height: 40px; padding: 0 12px;
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    font-size: 14px; font-family: inherit;
+  }
+  .field-row input { flex: 1; min-width: 180px; }
+  .count { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+
+  /* ---------- Grille et cartes ---------- */
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: var(--gap);
   }
   .card {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
     position: relative;
+    display: flex; flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
   }
-  .new-badge {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    background: var(--accent);
-    color: #0a0a0a;
-    font-size: 10px;
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 6px;
-    z-index: 2;
-    letter-spacing: 0.5px;
-  }
-  .status-badge {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    font-size: 10px;
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 6px;
-    z-index: 2;
-    letter-spacing: 0.5px;
-  }
-  .status-badge.proven { background: var(--green); color: #0a0a0a; }
-  .status-badge.watchlist { background: var(--blue); color: #fff; }
-  .header-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 14px 10px;
-  }
+  .card-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
   .avatar {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: #000 center/cover no-repeat;
-    flex-shrink: 0;
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--surface-2) center/cover no-repeat;
+    display: grid; place-items: center;
+    font-weight: 700; color: var(--muted); flex-shrink: 0;
   }
-  .header-name {
-    font-weight: 600;
-    font-size: 14px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .card-title { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-sub { font-size: 12px; color: var(--muted); }
+  .head-text { min-width: 0; flex: 1; }
+  .pill {
+    font-size: 10px; font-weight: 700; letter-spacing: .4px;
+    padding: 3px 8px; border-radius: 999px; white-space: nowrap;
   }
-  .thumb-strip {
-    display: flex;
-    gap: 2px;
-    width: 100%;
+  .pill.proven { background: var(--green); color: #0b0b0b; }
+  .pill.watchlist { background: var(--blue); color: #fff; }
+  .pill.new { background: var(--accent); color: var(--accent-text); }
+  .head-pills { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+  .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; background: var(--border); }
+  .strip img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: var(--surface-2); }
+  .strip-empty { height: 6px; background: var(--surface-2); }
+  .card-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+  .desc {
+    font-size: 12.5px; color: var(--muted);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .thumb-strip img {
-    width: 33.333%;
-    aspect-ratio: 16/9;
-    object-fit: cover;
-    display: block;
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: var(--surface-2); color: var(--muted); }
+  .tag.good { background: var(--green); color: #0b0b0b; }
+  .tag.mid { background: var(--amber); color: #0b0b0b; }
+  .tag.low { background: var(--surface-2); color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat { background: var(--surface-2); border-radius: 8px; padding: 8px; text-align: center; }
+  .stat b { display: block; font-size: 15px; }
+  .stat span { font-size: 11px; color: var(--muted); }
+  .card-foot { font-size: 11.5px; color: var(--muted); }
+  .actions { display: flex; gap: 8px; margin-top: auto; }
+  .btn-main {
+    flex: 1; min-height: 40px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    background: var(--accent); color: var(--accent-text);
+    border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 13px;
   }
-  .card-body { padding: 10px 14px 12px; }
-  .card-description {
-    font-size: 12px;
+  .btn-danger {
+    width: 40px; min-height: 40px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; color: var(--red);
+    border: 1px solid var(--red); border-radius: 10px; cursor: pointer;
+  }
+  .btn-danger:hover { background: var(--red); color: #fff; }
+
+  /* ---------- États : chargement, vide, erreur ---------- */
+  .skeleton { pointer-events: none; }
+  .sk { background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 6px; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  .sk-row { height: 38px; margin: 12px 14px; }
+  .sk-strip { aspect-ratio: 48/9; border-radius: 0; }
+  .sk-line { height: 12px; margin: 10px 14px; }
+  .message {
+    grid-column: 1 / -1;
+    text-align: center; padding: 48px 16px;
+    background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius);
     color: var(--muted);
-    margin-bottom: 10px;
-    line-height: 1.4;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
   }
-  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
-  .badge {
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 6px;
-    font-weight: 600;
+  .message b { display: block; color: var(--text); font-size: 16px; margin-bottom: 6px; }
+  .message button { margin-top: 14px; }
+  .more-wrap { text-align: center; margin: 22px 0 8px; }
+
+  /* ---------- Téléphone et tablette ---------- */
+  @media (max-width: 760px) {
+    .container { padding: 12px; }
+    .topbar { padding: 10px 12px; }
+    #filters-toggle { display: inline-flex; }
+    .toolbar { display: none; }
+    .toolbar.open { display: block; }
+    .seg-row { flex-direction: column; gap: 10px; }
+    .seg { width: 100%; }
+    .seg button { flex: 1; }
+    .field-row select, .field-row input { flex: 1 1 100%; }
+    .grid { grid-template-columns: 1fr; }
   }
-  .badge.market { background: #334155; color: #cbd5e1; }
-  .badge.good { background: var(--green); color: #0a0a0a; }
-  .badge.mid { background: var(--orange); color: #0a0a0a; }
-  .badge.low { background: var(--gray); color: #fff; }
-  .meta { color: var(--muted); font-size: 12px; line-height: 1.6; }
-  .actions { display: flex; gap: 8px; margin-top: 10px; }
-  .link {
-    flex: 1;
-    text-align: center;
-    padding: 8px;
-    background: var(--accent);
-    color: #0a0a0a;
-    text-decoration: none;
-    border-radius: 8px;
-    font-size: 13px;
-    font-weight: 600;
+  @media (min-width: 761px) and (max-width: 1100px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
   }
-  .delete-btn {
-    padding: 8px 12px;
-    background: transparent;
-    border: 1px solid var(--red);
-    color: var(--red);
-    border-radius: 8px;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .delete-btn:hover { background: var(--red); color: #fff; }
 </style>
 </head>
 <body>
 
-<h1>📊 Chaînes découvertes — Niche Finder</h1>
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    </div>
+    Niche Finder
+  </div>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="filters-toggle" aria-label="Filtres">
+      <svg viewBox="0 0 24 24"><path d="M3 5h18M6 12h12M10 19h4"/></svg>Filtres
+    </button>
+    <button class="icon-btn" id="theme-toggle" aria-label="Changer de thème">
+      <svg viewBox="0 0 24 24" id="theme-icon"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+  </div>
+</header>
 
-<div class="tabs" id="time-tabs">
-  <div class="tab active-time" data-view="new">🆕 Nouvelles (30 derniers jours)</div>
-  <div class="tab" data-view="all">📚 Toutes les chaînes</div>
-</div>
+<main class="container">
+  <section class="toolbar" id="toolbar">
+    <div class="seg-row">
+      <div class="seg" id="time-seg">
+        <button class="active" data-view="new">Nouvelles (30 jours)</button>
+        <button data-view="all">Toutes les chaînes</button>
+      </div>
+      <div class="seg status" id="status-seg">
+        <button class="active" data-status="all">Tout statut</button>
+        <button data-status="proven">Proven</button>
+        <button data-status="watchlist">Watchlist</button>
+      </div>
+    </div>
+    <div class="field-row">
+      <input type="search" id="search" placeholder="Rechercher une chaîne...">
+      <select id="market"><option value="all">Tous les marchés</option></select>
+      <select id="sort">
+        <option value="density_score">Trier par densité</option>
+        <option value="subscriber_count">Trier par abonnés</option>
+        <option value="proven_video_count">Trier par vidéos ≥100K</option>
+        <option value="first_discovered_at">Trier par date de découverte</option>
+      </select>
+    </div>
+  </section>
 
-<div class="tabs" id="status-tabs">
-  <div class="tab active-status" data-status="all">Tout statut</div>
-  <div class="tab" data-status="proven">✅ Proven (3+ vidéos ≥100K)</div>
-  <div class="tab" data-status="watchlist">👀 Watchlist (en développement)</div>
-</div>
-
-<div class="controls">
-  <input type="text" id="search" placeholder="Rechercher un nom de chaîne...">
-  <select id="market">
-    <option value="all">Tous les marchés</option>
-  </select>
-  <select id="sort">
-    <option value="density_score">Trier par densité</option>
-    <option value="subscriber_count">Trier par abonnés</option>
-    <option value="first_discovered_at">Trier par date de découverte</option>
-  </select>
-</div>
-
-<div class="count" id="count"></div>
-<div class="grid" id="grid"></div>
+  <div class="count" id="count"></div>
+  <div class="grid" id="grid"></div>
+  <div class="more-wrap" id="more-wrap" style="display:none">
+    <button class="icon-btn" id="more-btn">Afficher plus</button>
+  </div>
+</main>
 
 <script>
+const PAGE_SIZE = 48;
 let adminKey = null;
 let currentView = 'new';
 let currentStatus = 'all';
+let visibleCount = PAGE_SIZE;
+let currentChannels = [];
+let searchTimer = null;
 
+const $ = id => document.getElementById(id);
+
+function esc(value) {
+  const d = document.createElement('div');
+  d.textContent = value == null ? '' : String(value);
+  return d.innerHTML;
+}
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+function fmt(n) { return (n || 0).toLocaleString('fr-FR'); }
+
+/* ---------- Thème ---------- */
+const SUN = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
+const MOON = '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>';
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  $('theme-icon').innerHTML = theme === 'dark' ? SUN : MOON;
+}
+function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem('theme'); } catch (e) {}
+  const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+  applyTheme(saved || (prefersLight ? 'light' : 'dark'));
+}
+$('theme-toggle').addEventListener('click', () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  try { localStorage.setItem('theme', next); } catch (e) {}
+});
+
+/* ---------- Filtres repliables (téléphone) ---------- */
+$('filters-toggle').addEventListener('click', () => $('toolbar').classList.toggle('open'));
+
+/* ---------- États ---------- */
+function showSkeletons() {
+  const grid = $('grid');
+  grid.innerHTML = '';
+  for (let i = 0; i < 6; i++) {
+    const d = document.createElement('div');
+    d.className = 'card skeleton';
+    d.innerHTML = '<div class="sk sk-row"></div><div class="sk sk-strip"></div><div class="sk sk-line"></div><div class="sk sk-line" style="width:60%"></div><div class="sk sk-line" style="width:80%"></div>';
+    grid.appendChild(d);
+  }
+  $('count').textContent = 'Chargement...';
+  $('more-wrap').style.display = 'none';
+}
+
+function showMessage(title, text, withRetry) {
+  $('grid').innerHTML = `<div class="message"><b>${esc(title)}</b>${esc(text)}${
+    withRetry ? '<br><button class="icon-btn" id="retry-btn">Réessayer</button>' : ''}</div>`;
+  if (withRetry) $('retry-btn').addEventListener('click', loadChannels);
+  $('more-wrap').style.display = 'none';
+}
+
+/* ---------- Marchés ---------- */
 async function loadMarkets() {
-  const res = await fetch('/api/markets');
-  const markets = await res.json();
-  const select = document.getElementById('market');
-  select.innerHTML = '<option value="all">Tous les marchés</option>';
-  markets.forEach(m => {
-    const opt = document.createElement('option');
-    opt.value = m;
-    opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
-    select.appendChild(opt);
-  });
+  try {
+    const res = await fetch('/api/markets');
+    if (!res.ok) throw new Error();
+    const markets = await res.json();
+    const select = $('market');
+    select.innerHTML = '<option value="all">Tous les marchés</option>';
+    markets.forEach(m => {
+      const o = document.createElement('option');
+      o.value = m;
+      o.textContent = capitalize(m);
+      select.appendChild(o);
+    });
+  } catch (e) { /* le filtre garde "Tous les marchés" */ }
 }
 
-function badgeClass(score) {
-  if (score >= 0.3) return 'good';
-  if (score >= 0.1) return 'mid';
-  return 'low';
+/* ---------- Chaînes ---------- */
+function densityClass(score) { return score >= 0.3 ? 'good' : score >= 0.1 ? 'mid' : 'low'; }
+
+function renderCard(c) {
+  const score = c.density_score || 0;
+  const proven = c.channel_status === 'PROVEN';
+  const ids = (c.recent_video_ids || []).slice(0, 3);
+  const strip = ids.length
+    ? `<div class="strip">${ids.map(id => `<img loading="lazy" src="https://i.ytimg.com/vi/${esc(id)}/mqdefault.jpg" alt="">`).join('')}</div>`
+    : '<div class="strip-empty"></div>';
+  const avatarStyle = c.channel_thumbnail_url ? `background-image:url('${esc(c.channel_thumbnail_url)}')` : '';
+  const initial = c.channel_thumbnail_url ? '' : esc((c.channel_title || '?').charAt(0).toUpperCase());
+
+  const el = document.createElement('article');
+  el.className = 'card';
+  el.innerHTML = `
+    <div class="card-head">
+      <div class="avatar" style="${avatarStyle}">${initial}</div>
+      <div class="head-text">
+        <div class="card-title">${esc(c.channel_title || 'Sans nom')}</div>
+        <div class="card-sub">${fmt(c.subscriber_count)} abonnés</div>
+      </div>
+      <div class="head-pills">
+        <span class="pill ${proven ? 'proven' : 'watchlist'}">${proven ? 'PROVEN' : 'WATCHLIST'}</span>
+        ${c.is_new ? '<span class="pill new">NEW</span>' : ''}
+      </div>
+    </div>
+    ${strip}
+    <div class="card-body">
+      ${c.channel_description ? `<div class="desc">${esc(c.channel_description)}</div>` : ''}
+      <div class="tags">
+        <span class="tag">${esc(capitalize(c.market || '?'))}</span>
+        <span class="tag ${densityClass(score)}">${Math.round(score * 100)}% densité</span>
+        ${c.detected_language ? `<span class="tag">${esc(c.detected_language)}</span>` : ''}
+      </div>
+      <div class="stats">
+        <div class="stat"><b>${c.proven_video_count || 0}</b><span>vidéos ≥100K</span></div>
+        <div class="stat"><b>${c.strong_video_count || 0}</b><span>vidéos fortes</span></div>
+        <div class="stat"><b>${c.total_videos_checked || 0}</b><span>vidéos</span></div>
+      </div>
+      <div class="card-foot">Découverte le ${c.first_discovered_at ? esc(c.first_discovered_at.slice(0, 10)) : '?'}</div>
+      <div class="actions">
+        <a class="btn-main" href="${esc(c.channel_url)}" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24"><path d="M14 3h7v7M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>YouTube
+        </a>
+        <button class="btn-danger" title="Supprimer" aria-label="Supprimer">
+          <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+        </button>
+      </div>
+    </div>`;
+  el.querySelector('.btn-danger').addEventListener('click', () => deleteChannel(c.channel_id, c.channel_title || ''));
+  return el;
 }
 
-async function deleteChannel(channelId, channelTitle) {
-  if (!confirm(`Supprimer "${channelTitle}" de la base ? Cette action est irréversible.`)) {
+function renderGrid() {
+  const grid = $('grid');
+  grid.innerHTML = '';
+
+  if (currentChannels.length === 0) {
+    showMessage('Aucune chaîne', 'Aucune chaîne ne correspond à ces filtres.', false);
+    $('count').textContent = '0 chaîne';
     return;
   }
 
-  if (!adminKey) {
-    adminKey = prompt("Mot de passe admin :");
-    if (!adminKey) return;
-  }
+  const shown = currentChannels.slice(0, visibleCount);
+  shown.forEach(c => grid.appendChild(renderCard(c)));
 
-  const res = await fetch(`/api/channels/${channelId}`, {
-    method: 'DELETE',
-    headers: { 'X-Admin-Key': adminKey },
-  });
-
-  if (res.ok) {
-    loadChannels();
-  } else {
-    const data = await res.json();
-    alert("Erreur : " + (data.error || "suppression impossible"));
-    adminKey = null;
-  }
-}
-
-function buildThumbStrip(videoIds) {
-  if (!videoIds || videoIds.length === 0) return '';
-  const imgs = videoIds.slice(0, 3).map(id =>
-    `<img src="https://i.ytimg.com/vi/${id}/mqdefault.jpg" loading="lazy">`
-  ).join('');
-  return `<div class="thumb-strip">${imgs}</div>`;
+  $('count').textContent = `${shown.length} affichée(s) sur ${currentChannels.length} chaîne(s)`;
+  $('more-wrap').style.display = currentChannels.length > visibleCount ? '' : 'none';
 }
 
 async function loadChannels() {
-  const search = document.getElementById('search').value;
-  const market = document.getElementById('market').value;
-  const sort = document.getElementById('sort').value;
+  showSkeletons();
+  visibleCount = PAGE_SIZE;
 
-  const params = new URLSearchParams({ search, market, view: currentView, status: currentStatus });
-  const res = await fetch('/api/channels?' + params.toString());
-  let channels = await res.json();
-
-  channels.sort((a, b) => (b[sort] || 0) - (a[sort] || 0));
-
-  const grid = document.getElementById('grid');
-  const count = document.getElementById('count');
-  count.textContent = `${channels.length} chaîne(s) trouvée(s)`;
-  grid.innerHTML = '';
-
-  channels.forEach(c => {
-    const avatarUrl = c.channel_thumbnail_url || '';
-    const score = c.density_score || 0;
-    const description = c.channel_description || '';
-    const thumbStrip = buildThumbStrip(c.recent_video_ids);
-    const statusLabel = c.channel_status === 'PROVEN' ? 'PROVEN' : 'WATCHLIST';
-    const statusClass = c.channel_status === 'PROVEN' ? 'proven' : 'watchlist';
-    const div = document.createElement('div');
-    div.className = 'card';
-    div.innerHTML = `
-      <div class="status-badge ${statusClass}">${statusLabel}</div>
-      ${c.is_new ? '<div class="new-badge">NEW</div>' : ''}
-      <div class="header-row">
-        <div class="avatar" style="background-image: url('${avatarUrl}')"></div>
-        <div class="header-name">${c.channel_title || 'Sans nom'}</div>
-      </div>
-      ${thumbStrip}
-      <div class="card-body">
-        ${description ? `<div class="card-description">${description}</div>` : ''}
-        <div class="badges">
-          <span class="badge market">${c.market || '?'}</span>
-          <span class="badge ${badgeClass(score)}">${Math.round(score * 100)}% densité</span>
-          ${c.detected_language ? `<span class="badge market">${c.detected_language}</span>` : ''}
-        </div>
-        <div class="meta">
-          ${(c.subscriber_count || 0).toLocaleString()} abonnés<br>
-          ${c.proven_video_count || 0} vidéo(s) ≥100K<br>
-          ${c.strong_video_count || 0}/${c.total_videos_checked || 0} vidéos fortes<br>
-          Découverte: ${c.first_discovered_at ? c.first_discovered_at.slice(0, 10) : '?'}
-        </div>
-        <div class="actions">
-          <a class="link" href="${c.channel_url}" target="_blank">Voir sur YouTube</a>
-          <button class="delete-btn" data-id="${c.channel_id}" data-title="${(c.channel_title || '').replace(/"/g, '&quot;')}">🗑</button>
-        </div>
-      </div>
-    `;
-    grid.appendChild(div);
+  const params = new URLSearchParams({
+    search: $('search').value,
+    market: $('market').value,
+    view: currentView,
+    status: currentStatus,
   });
 
-  grid.querySelectorAll('.delete-btn').forEach(btn => {
-    btn.addEventListener('click', () => deleteChannel(btn.dataset.id, btn.dataset.title));
-  });
+  try {
+    const res = await fetch('/api/channels?' + params.toString());
+    if (!res.ok) throw new Error('http ' + res.status);
+    const channels = await res.json();
+    const sort = $('sort').value;
+    channels.sort((a, b) => {
+      const av = a[sort] || 0, bv = b[sort] || 0;
+      if (typeof av === 'string' || typeof bv === 'string') return String(bv).localeCompare(String(av));
+      return bv - av;
+    });
+    currentChannels = channels;
+    renderGrid();
+  } catch (e) {
+    $('count').textContent = '';
+    showMessage('Impossible de charger les chaînes',
+      'Le serveur ou la base ne répond pas. Si le site vient de se réveiller, attends quelques secondes.', true);
+  }
 }
 
-document.querySelectorAll('#time-tabs .tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('#time-tabs .tab').forEach(t => t.classList.remove('active-time'));
-    tab.classList.add('active-time');
-    currentView = tab.dataset.view;
-    loadChannels();
-  });
+async function deleteChannel(channelId, title) {
+  if (!confirm(`Supprimer "${title}" de la base ? Cette action est irréversible.`)) return;
+
+  if (!adminKey) {
+    adminKey = prompt('Mot de passe admin :');
+    if (!adminKey) return;
+  }
+
+  try {
+    const res = await fetch(`/api/channels/${channelId}`, {
+      method: 'DELETE',
+      headers: { 'X-Admin-Key': adminKey },
+    });
+    if (res.ok) {
+      loadChannels();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert('Erreur : ' + (data.error || 'suppression impossible'));
+      if (res.status === 403) adminKey = null;
+    }
+  } catch (e) {
+    alert('Erreur réseau : suppression impossible.');
+  }
+}
+
+/* ---------- Événements ---------- */
+document.querySelectorAll('#time-seg button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#time-seg button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  currentView = b.dataset.view;
+  loadChannels();
+}));
+document.querySelectorAll('#status-seg button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#status-seg button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  currentStatus = b.dataset.status;
+  loadChannels();
+}));
+$('search').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadChannels, 250);
 });
+$('market').addEventListener('change', loadChannels);
+$('sort').addEventListener('change', loadChannels);
+$('more-btn').addEventListener('click', () => { visibleCount += PAGE_SIZE; renderGrid(); });
 
-document.querySelectorAll('#status-tabs .tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('#status-tabs .tab').forEach(t => t.classList.remove('active-status'));
-    tab.classList.add('active-status');
-    currentStatus = tab.dataset.status;
-    loadChannels();
-  });
-});
-
-document.getElementById('search').addEventListener('input', loadChannels);
-document.getElementById('market').addEventListener('change', loadChannels);
-document.getElementById('sort').addEventListener('change', loadChannels);
-
+initTheme();
 loadMarkets().then(loadChannels);
 </script>
 
