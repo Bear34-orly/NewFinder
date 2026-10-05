@@ -1,13 +1,13 @@
 """
-Petit serveur local qui lit channels.db en direct et sert une page web
-avec recherche + filtre par marché, temps (nouveau/tout) et statut
-(proven/watchlist). Aucune donnée n'est envoyée hors de ta machine.
+Serveur qui lit la base PostgreSQL et sert une page web avec recherche,
+filtre par marché, temps (nouveau/tout) et statut (proven/watchlist).
 
 Lancer avec: python -m webapp.server
 Puis ouvrir: http://localhost:5000
 """
 
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -22,6 +22,9 @@ app = Flask(__name__)
 ADMIN_KEY = os.environ.get("ADMIN_KEY")
 
 NEW_CHANNEL_WINDOW_DAYS = 30
+CACHE_SECONDS = 20
+
+_cache = {"data": None, "time": 0.0}
 
 
 def _is_new(channel: dict) -> bool:
@@ -36,6 +39,22 @@ def _is_new(channel: dict) -> bool:
     return dt >= cutoff
 
 
+def _get_channels_cached() -> list[dict]:
+    """Relit la base seulement si le cache a plus de CACHE_SECONDS secondes."""
+    now = time.time()
+    if _cache["data"] is None or now - _cache["time"] > CACHE_SECONDS:
+        channels = list_all_channels()
+        for c in channels:
+            c["is_new"] = _is_new(c)
+        _cache["data"] = channels
+        _cache["time"] = now
+    return _cache["data"]
+
+
+def _invalidate_cache():
+    _cache["data"] = None
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -45,13 +64,10 @@ def index():
 def api_channels():
     search = request.args.get("search", "").strip().lower()
     market = request.args.get("market", "").strip().lower()
-    view = request.args.get("view", "new").strip().lower()      # "new" ou "all"
-    status = request.args.get("status", "all").strip().lower()  # "proven", "watchlist", "all"
+    view = request.args.get("view", "new").strip().lower()
+    status = request.args.get("status", "all").strip().lower()
 
-    channels = list_all_channels()
-
-    for c in channels:
-        c["is_new"] = _is_new(c)
+    channels = list(_get_channels_cached())
 
     if view == "new":
         channels = [c for c in channels if c["is_new"]]
@@ -78,6 +94,7 @@ def api_delete_channel(channel_id):
         return jsonify({"error": "Clé admin invalide"}), 403
 
     deleted = delete_channel(channel_id)
+    _invalidate_cache()
     if deleted:
         return jsonify({"status": "deleted", "channel_id": channel_id})
     else:
@@ -86,7 +103,7 @@ def api_delete_channel(channel_id):
 
 @app.route("/api/markets")
 def api_markets():
-    channels = list_all_channels()
+    channels = _get_channels_cached()
     markets = sorted({c["market"] for c in channels if c.get("market")})
     return jsonify(markets)
 

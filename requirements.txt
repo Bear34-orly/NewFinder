@@ -1,3 +1,6 @@
 requests
 python-dotenv
 langdetect
+flask
+pytrends
+psycopg2-binary
