@@ -4,3 +4,4 @@ langdetect
 flask
 pytrends
 psycopg2-binary
+gunicorn
