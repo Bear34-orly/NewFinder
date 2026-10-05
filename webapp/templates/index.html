@@ -44,7 +44,7 @@
   /* ---------- Barre du haut ---------- */
   .topbar {
     position: sticky; top: 0; z-index: 20;
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 12px 20px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
@@ -55,6 +55,14 @@
     background: var(--accent); color: var(--accent-text);
     display: grid; place-items: center;
   }
+  .nav { display: inline-flex; gap: 4px; background: var(--surface-2); border-radius: 10px; padding: 3px; }
+  .nav button {
+    min-height: 34px; padding: 0 14px;
+    background: transparent; color: var(--muted);
+    border: none; border-radius: 8px;
+    font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;
+  }
+  .nav button.active { background: var(--accent); color: var(--accent-text); }
   .topbar-actions { display: flex; gap: 8px; }
   .icon-btn {
     min-width: 40px; height: 40px;
@@ -161,6 +169,29 @@
   }
   .btn-danger:hover { background: var(--red); color: #fff; }
 
+  /* ---------- Statistiques ---------- */
+  .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--gap); margin-bottom: 20px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+  .kpi b { display: block; font-size: 24px; }
+  .kpi span { font-size: 12px; color: var(--muted); }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 20px; }
+  .panel h2 { margin: 0 0 12px; font-size: 15px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 640px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  tbody tr.row-link { cursor: pointer; }
+  tbody tr.row-link:hover { background: var(--surface-2); }
+  td.num, th.num { text-align: right; }
+  .bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; min-width: 80px; }
+  .bar i { display: block; height: 100%; background: var(--green); }
+  .top-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--gap); }
+  .top-card { background: var(--surface-2); border-radius: 10px; padding: 12px; }
+  .top-card h3 { margin: 0 0 8px; font-size: 13px; }
+  .top-card a { display: flex; justify-content: space-between; gap: 8px; color: var(--text); text-decoration: none; font-size: 12.5px; padding: 4px 0; }
+  .top-card a span:last-child { color: var(--muted); white-space: nowrap; }
+  .top-card a:hover span:first-child { color: var(--accent); }
+
   /* ---------- États : chargement, vide, erreur ---------- */
   .skeleton { pointer-events: none; }
   .sk { background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 6px; }
@@ -181,8 +212,9 @@
   /* ---------- Téléphone et tablette ---------- */
   @media (max-width: 760px) {
     .container { padding: 12px; }
-    .topbar { padding: 10px 12px; }
-    #filters-toggle { display: inline-flex; }
+    .topbar { padding: 10px 12px; flex-wrap: wrap; }
+    .brand span.brand-name { display: none; }
+    #filters-toggle.visible { display: inline-flex; }
     .toolbar { display: none; }
     .toolbar.open { display: block; }
     .seg-row { flex-direction: column; gap: 10px; }
@@ -190,6 +222,7 @@
     .seg button { flex: 1; }
     .field-row select, .field-row input { flex: 1 1 100%; }
     .grid { grid-template-columns: 1fr; }
+    .kpis { grid-template-columns: repeat(2, 1fr); }
   }
   @media (min-width: 761px) and (max-width: 1100px) {
     .grid { grid-template-columns: repeat(2, 1fr); }
@@ -203,10 +236,14 @@
     <div class="brand-mark">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
     </div>
-    Niche Finder
+    <span class="brand-name">Niche Finder</span>
   </div>
+  <nav class="nav" id="nav">
+    <button class="active" data-page="channels">Chaînes</button>
+    <button data-page="stats">Statistiques</button>
+  </nav>
   <div class="topbar-actions">
-    <button class="icon-btn" id="filters-toggle" aria-label="Filtres">
+    <button class="icon-btn visible" id="filters-toggle" aria-label="Filtres">
       <svg viewBox="0 0 24 24"><path d="M3 5h18M6 12h12M10 19h4"/></svg>Filtres
     </button>
     <button class="icon-btn" id="theme-toggle" aria-label="Changer de thème">
@@ -215,7 +252,8 @@
   </div>
 </header>
 
-<main class="container">
+<!-- ===================== PAGE CHAÎNES ===================== -->
+<main class="container" id="page-channels">
   <section class="toolbar" id="toolbar">
     <div class="seg-row">
       <div class="seg" id="time-seg">
@@ -247,11 +285,17 @@
   </div>
 </main>
 
+<!-- ===================== PAGE STATISTIQUES ===================== -->
+<main class="container" id="page-stats" style="display:none">
+  <div id="stats-content"></div>
+</main>
+
 <script>
 const PAGE_SIZE = 48;
 let adminKey = null;
 let currentView = 'new';
 let currentStatus = 'all';
+let currentPage = 'channels';
 let visibleCount = PAGE_SIZE;
 let currentChannels = [];
 let searchTimer = null;
@@ -289,6 +333,17 @@ $('theme-toggle').addEventListener('click', () => {
 /* ---------- Filtres repliables (téléphone) ---------- */
 $('filters-toggle').addEventListener('click', () => $('toolbar').classList.toggle('open'));
 
+/* ---------- Navigation entre pages ---------- */
+function showPage(page) {
+  currentPage = page;
+  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+  $('page-channels').style.display = page === 'channels' ? '' : 'none';
+  $('page-stats').style.display = page === 'stats' ? '' : 'none';
+  $('filters-toggle').classList.toggle('visible', page === 'channels');
+  if (page === 'stats') loadStats();
+}
+document.querySelectorAll('#nav button').forEach(b => b.addEventListener('click', () => showPage(b.dataset.page)));
+
 /* ---------- États ---------- */
 function showSkeletons() {
   const grid = $('grid');
@@ -317,6 +372,7 @@ async function loadMarkets() {
     if (!res.ok) throw new Error();
     const markets = await res.json();
     const select = $('market');
+    const current = select.value;
     select.innerHTML = '<option value="all">Tous les marchés</option>';
     markets.forEach(m => {
       const o = document.createElement('option');
@@ -324,6 +380,7 @@ async function loadMarkets() {
       o.textContent = capitalize(m);
       select.appendChild(o);
     });
+    select.value = markets.includes(current) ? current : 'all';
   } catch (e) { /* le filtre garde "Tous les marchés" */ }
 }
 
@@ -450,6 +507,87 @@ async function deleteChannel(channelId, title) {
     }
   } catch (e) {
     alert('Erreur réseau : suppression impossible.');
+  }
+}
+
+/* ---------- Statistiques ---------- */
+function openMarket(market) {
+  $('market').value = market;
+  currentView = 'all';
+  currentStatus = 'all';
+  document.querySelectorAll('#time-seg button').forEach(x => x.classList.toggle('active', x.dataset.view === 'all'));
+  document.querySelectorAll('#status-seg button').forEach(x => x.classList.toggle('active', x.dataset.status === 'all'));
+  showPage('channels');
+  loadChannels();
+}
+
+async function loadStats() {
+  const box = $('stats-content');
+  box.innerHTML = '<div class="message"><b>Chargement...</b></div>';
+
+  try {
+    const res = await fetch('/api/stats');
+    if (!res.ok) throw new Error();
+    const s = await res.json();
+    const t = s.totals;
+
+    const maxChannels = Math.max(1, ...s.markets.map(m => m.channels));
+
+    const rows = s.markets.map(m => `
+      <tr class="row-link" data-market="${esc(m.market)}">
+        <td><b>${esc(capitalize(m.market))}</b></td>
+        <td class="num">${fmt(m.channels)}</td>
+        <td><div class="bar"><i style="width:${Math.round(m.channels / maxChannels * 100)}%"></i></div></td>
+        <td class="num">${fmt(m.proven)}</td>
+        <td class="num">${fmt(m.watchlist)}</td>
+        <td class="num">${fmt(m.avg_subscribers)}</td>
+        <td class="num">${Math.round(m.avg_density * 100)}%</td>
+        <td class="num">${fmt(m.added_30d)}</td>
+      </tr>`).join('');
+
+    const tops = s.markets.map(m => `
+      <div class="top-card">
+        <h3>${esc(capitalize(m.market))}</h3>
+        ${m.top_channels.map(c => `
+          <a href="${esc(c.channel_url)}" target="_blank" rel="noopener">
+            <span>${esc(c.channel_title || 'Sans nom')}</span>
+            <span>${c.proven_video_count} ≥100K</span>
+          </a>`).join('')}
+      </div>`).join('');
+
+    box.innerHTML = `
+      <div class="kpis">
+        <div class="kpi"><b>${fmt(t.channels)}</b><span>Chaînes</span></div>
+        <div class="kpi"><b>${fmt(t.proven)}</b><span>Proven</span></div>
+        <div class="kpi"><b>${fmt(t.watchlist)}</b><span>Watchlist</span></div>
+        <div class="kpi"><b>${fmt(t.added_7d)}</b><span>Ajoutées sur 7 jours</span></div>
+        <div class="kpi"><b>${fmt(t.added_30d)}</b><span>Ajoutées sur 30 jours</span></div>
+      </div>
+
+      <div class="panel">
+        <h2>Par marché <span style="color:var(--muted);font-weight:400;font-size:12px">(clique sur une ligne pour voir ses chaînes)</span></h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Marché</th><th class="num">Chaînes</th><th></th><th class="num">Proven</th>
+              <th class="num">Watchlist</th><th class="num">Abonnés moy.</th>
+              <th class="num">Densité moy.</th><th class="num">+30 jours</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Meilleures chaînes par marché <span style="color:var(--muted);font-weight:400;font-size:12px">(par nombre de vidéos ≥100K)</span></h2>
+        <div class="top-grid">${tops}</div>
+      </div>`;
+
+    box.querySelectorAll('tr.row-link').forEach(tr =>
+      tr.addEventListener('click', () => openMarket(tr.dataset.market)));
+  } catch (e) {
+    box.innerHTML = '<div class="message"><b>Impossible de charger les statistiques</b>Le serveur ou la base ne répond pas.<br><button class="icon-btn" id="stats-retry">Réessayer</button></div>';
+    $('stats-retry').addEventListener('click', loadStats);
   }
 }
 
