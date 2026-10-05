@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Niche Finder — Chaînes découvertes</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card-bg: #1a1d24;
+    --border: #2a2d35;
+    --text: #e8e8ea;
+    --muted: #9a9ca3;
+    --accent: #f97316;
+    --green: #22c55e;
+    --orange: #eab308;
+    --gray: #6b7280;
+    --red: #ef4444;
+    --blue: #3b82f6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin-bottom: 20px; }
+  .tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .tab {
+    padding: 9px 16px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .tab.active-time {
+    background: var(--accent);
+    color: #0a0a0a;
+    border-color: var(--accent);
+  }
+  .tab.active-status {
+    background: var(--blue);
+    color: #fff;
+    border-color: var(--blue);
+  }
+  .controls {
+    display: flex;
+    gap: 12px;
+    margin: 16px 0 20px;
+    flex-wrap: wrap;
+  }
+  input, select {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  input { flex: 1; min-width: 200px; }
+  .count { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .new-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--accent);
+    color: #0a0a0a;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    z-index: 2;
+    letter-spacing: 0.5px;
+  }
+  .status-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    z-index: 2;
+    letter-spacing: 0.5px;
+  }
+  .status-badge.proven { background: var(--green); color: #0a0a0a; }
+  .status-badge.watchlist { background: var(--blue); color: #fff; }
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px 10px;
+  }
+  .avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #000 center/cover no-repeat;
+    flex-shrink: 0;
+  }
+  .header-name {
+    font-weight: 600;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .thumb-strip {
+    display: flex;
+    gap: 2px;
+    width: 100%;
+  }
+  .thumb-strip img {
+    width: 33.333%;
+    aspect-ratio: 16/9;
+    object-fit: cover;
+    display: block;
+  }
+  .card-body { padding: 10px 14px 12px; }
+  .card-description {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 10px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .badge {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-weight: 600;
+  }
+  .badge.market { background: #334155; color: #cbd5e1; }
+  .badge.good { background: var(--green); color: #0a0a0a; }
+  .badge.mid { background: var(--orange); color: #0a0a0a; }
+  .badge.low { background: var(--gray); color: #fff; }
+  .meta { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; }
+  .link {
+    flex: 1;
+    text-align: center;
+    padding: 8px;
+    background: var(--accent);
+    color: #0a0a0a;
+    text-decoration: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .delete-btn {
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid var(--red);
+    color: var(--red);
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .delete-btn:hover { background: var(--red); color: #fff; }
+</style>
+</head>
+<body>
+
+<h1>📊 Chaînes découvertes — Niche Finder</h1>
+
+<div class="tabs" id="time-tabs">
+  <div class="tab active-time" data-view="new">🆕 Nouvelles (30 derniers jours)</div>
+  <div class="tab" data-view="all">📚 Toutes les chaînes</div>
+</div>
+
+<div class="tabs" id="status-tabs">
+  <div class="tab active-status" data-status="all">Tout statut</div>
+  <div class="tab" data-status="proven">✅ Proven (3+ vidéos ≥100K)</div>
+  <div class="tab" data-status="watchlist">👀 Watchlist (en développement)</div>
+</div>
+
+<div class="controls">
+  <input type="text" id="search" placeholder="Rechercher un nom de chaîne...">
+  <select id="market">
+    <option value="all">Tous les marchés</option>
+  </select>
+  <select id="sort">
+    <option value="density_score">Trier par densité</option>
+    <option value="subscriber_count">Trier par abonnés</option>
+    <option value="first_discovered_at">Trier par date de découverte</option>
+  </select>
+</div>
+
+<div class="count" id="count"></div>
+<div class="grid" id="grid"></div>
+
+<script>
+let adminKey = null;
+let currentView = 'new';
+let currentStatus = 'all';
+
+async function loadMarkets() {
+  const res = await fetch('/api/markets');
+  const markets = await res.json();
+  const select = document.getElementById('market');
+  select.innerHTML = '<option value="all">Tous les marchés</option>';
+  markets.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
+    select.appendChild(opt);
+  });
+}
+
+function badgeClass(score) {
+  if (score >= 0.3) return 'good';
+  if (score >= 0.1) return 'mid';
+  return 'low';
+}
+
+async function deleteChannel(channelId, channelTitle) {
+  if (!confirm(`Supprimer "${channelTitle}" de la base ? Cette action est irréversible.`)) {
+    return;
+  }
+
+  if (!adminKey) {
+    adminKey = prompt("Mot de passe admin :");
+    if (!adminKey) return;
+  }
+
+  const res = await fetch(`/api/channels/${channelId}`, {
+    method: 'DELETE',
+    headers: { 'X-Admin-Key': adminKey },
+  });
+
+  if (res.ok) {
+    loadChannels();
+  } else {
+    const data = await res.json();
+    alert("Erreur : " + (data.error || "suppression impossible"));
+    adminKey = null;
+  }
+}
+
+function buildThumbStrip(videoIds) {
+  if (!videoIds || videoIds.length === 0) return '';
+  const imgs = videoIds.slice(0, 3).map(id =>
+    `<img src="https://i.ytimg.com/vi/${id}/mqdefault.jpg" loading="lazy">`
+  ).join('');
+  return `<div class="thumb-strip">${imgs}</div>`;
+}
+
+async function loadChannels() {
+  const search = document.getElementById('search').value;
+  const market = document.getElementById('market').value;
+  const sort = document.getElementById('sort').value;
+
+  const params = new URLSearchParams({ search, market, view: currentView, status: currentStatus });
+  const res = await fetch('/api/channels?' + params.toString());
+  let channels = await res.json();
+
+  channels.sort((a, b) => (b[sort] || 0) - (a[sort] || 0));
+
+  const grid = document.getElementById('grid');
+  const count = document.getElementById('count');
+  count.textContent = `${channels.length} chaîne(s) trouvée(s)`;
+  grid.innerHTML = '';
+
+  channels.forEach(c => {
+    const avatarUrl = c.channel_thumbnail_url || '';
+    const score = c.density_score || 0;
+    const description = c.channel_description || '';
+    const thumbStrip = buildThumbStrip(c.recent_video_ids);
+    const statusLabel = c.channel_status === 'PROVEN' ? 'PROVEN' : 'WATCHLIST';
+    const statusClass = c.channel_status === 'PROVEN' ? 'proven' : 'watchlist';
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `
+      <div class="status-badge ${statusClass}">${statusLabel}</div>
+      ${c.is_new ? '<div class="new-badge">NEW</div>' : ''}
+      <div class="header-row">
+        <div class="avatar" style="background-image: url('${avatarUrl}')"></div>
+        <div class="header-name">${c.channel_title || 'Sans nom'}</div>
+      </div>
+      ${thumbStrip}
+      <div class="card-body">
+        ${description ? `<div class="card-description">${description}</div>` : ''}
+        <div class="badges">
+          <span class="badge market">${c.market || '?'}</span>
+          <span class="badge ${badgeClass(score)}">${Math.round(score * 100)}% densité</span>
+          ${c.detected_language ? `<span class="badge market">${c.detected_language}</span>` : ''}
+        </div>
+        <div class="meta">
+          ${(c.subscriber_count || 0).toLocaleString()} abonnés<br>
+          ${c.proven_video_count || 0} vidéo(s) ≥100K<br>
+          ${c.strong_video_count || 0}/${c.total_videos_checked || 0} vidéos fortes<br>
+          Découverte: ${c.first_discovered_at ? c.first_discovered_at.slice(0, 10) : '?'}
+        </div>
+        <div class="actions">
+          <a class="link" href="${c.channel_url}" target="_blank">Voir sur YouTube</a>
+          <button class="delete-btn" data-id="${c.channel_id}" data-title="${(c.channel_title || '').replace(/"/g, '&quot;')}">🗑</button>
+        </div>
+      </div>
+    `;
+    grid.appendChild(div);
+  });
+
+  grid.querySelectorAll('.delete-btn').forEach(btn => {
+    btn.addEventListener('click', () => deleteChannel(btn.dataset.id, btn.dataset.title));
+  });
+}
+
+document.querySelectorAll('#time-tabs .tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#time-tabs .tab').forEach(t => t.classList.remove('active-time'));
+    tab.classList.add('active-time');
+    currentView = tab.dataset.view;
+    loadChannels();
+  });
+});
+
+document.querySelectorAll('#status-tabs .tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#status-tabs .tab').forEach(t => t.classList.remove('active-status'));
+    tab.classList.add('active-status');
+    currentStatus = tab.dataset.status;
+    loadChannels();
+  });
+});
+
+document.getElementById('search').addEventListener('input', loadChannels);
+document.getElementById('market').addEventListener('change', loadChannels);
+document.getElementById('sort').addEventListener('change', loadChannels);
+
+loadMarkets().then(loadChannels);
+</script>
+
+</body>
+</html>

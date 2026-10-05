@@ -1,0 +1,15 @@
+litellm_settings:
+  drop_params: true
+
+model_list:
+  - model_name: "nvidia-model*"
+    litellm_params:
+      model: nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b
+      api_key: "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"
+      api_base: https://integrate.api.nvidia.com/v1
+
+  - model_name: "nvidia-model"
+    litellm_params:
+      model: nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b
+      api_key: "VOTRE_CLE_NVIDIA_ICI"
+      api_base: https://integrate.api.nvidia.com/v1
