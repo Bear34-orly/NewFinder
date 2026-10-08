@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Niche Finder</title>
+<link rel="stylesheet" href="/static/competition.css?v=1">
 <style>
   :root {
     --bg: #0e1014;
@@ -241,6 +242,7 @@
   <nav class="nav" id="nav">
     <button class="active" data-page="channels">Chaînes</button>
     <button data-page="stats">Statistiques</button>
+    <button data-page="competition">Concurrence</button>
   </nav>
   <div class="topbar-actions">
     <button class="icon-btn visible" id="filters-toggle" aria-label="Filtres">
@@ -289,6 +291,9 @@
 <main class="container" id="page-stats" style="display:none">
   <div id="stats-content"></div>
 </main>
+
+<!-- ===================== PAGE CONCURRENCE ===================== -->
+<main class="container" id="page-competition" style="display:none"></main>
 
 <script>
 const PAGE_SIZE = 48;
@@ -339,8 +344,10 @@ function showPage(page) {
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.page === page));
   $('page-channels').style.display = page === 'channels' ? '' : 'none';
   $('page-stats').style.display = page === 'stats' ? '' : 'none';
+  $('page-competition').style.display = page === 'competition' ? '' : 'none';
   $('filters-toggle').classList.toggle('visible', page === 'channels');
   if (page === 'stats') loadStats();
+  if (page === 'competition' && window.cpOpen) window.cpOpen();
 }
 document.querySelectorAll('#nav button').forEach(b => b.addEventListener('click', () => showPage(b.dataset.page)));
 
@@ -615,6 +622,7 @@ $('more-btn').addEventListener('click', () => { visibleCount += PAGE_SIZE; rende
 initTheme();
 loadMarkets().then(loadChannels);
 </script>
+<script src="/static/competition.js?v=1"></script>
 
 </body>
 </html>

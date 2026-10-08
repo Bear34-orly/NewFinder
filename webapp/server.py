@@ -1,7 +1,8 @@
 """
 Serveur qui lit la base PostgreSQL et sert une page web avec recherche,
 filtre par marché, temps (nouveau/tout), statut (proven/watchlist) et
-statistiques par marché.
+statistiques par marché. Contient aussi la page Concurrence (voir
+webapp/competition_routes.py).
 
 Lancer avec: python -m webapp.server
 Puis ouvrir: http://localhost:5000
@@ -15,10 +16,12 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 
 from discovery.database import delete_channel, list_all_channels
+from webapp.competition_routes import bp as competition_bp
 
 load_dotenv()
 
 app = Flask(__name__)
+app.register_blueprint(competition_bp)
 
 ADMIN_KEY = os.environ.get("ADMIN_KEY")
 
