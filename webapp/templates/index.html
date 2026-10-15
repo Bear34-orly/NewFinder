@@ -6,37 +6,43 @@
 <title>Niche Finder</title>
 <link rel="stylesheet" href="/static/competition.css?v=1">
 <style>
+  /* Couleurs inspirées de YouTube */
   :root {
-    --bg: #0e1014;
-    --surface: #171a21;
-    --surface-2: #1f232c;
-    --border: #2a2f3a;
-    --text: #eceef2;
-    --muted: #8f96a3;
-    --accent: #f97316;
-    --accent-text: #111111;
-    --green: #22c55e;
-    --blue: #3b82f6;
-    --amber: #eab308;
-    --red: #ef4444;
+    --bg: #0f0f0f;
+    --surface: #181818;
+    --surface-2: #272727;
+    --border: #303030;
+    --text: #f1f1f1;
+    --muted: #aaaaaa;
+    --accent: #ff0000;
+    --accent-text: #ffffff;
+    --green: #2ecc71;
+    --blue: #3ea6ff;
+    --blue-text: #0f0f0f;
+    --amber: #f5c518;
+    --red: #ff4e45;
     --radius: 12px;
     --gap: 16px;
+    --side-w: 256px;
+    --top-h: 56px;
   }
   :root[data-theme="light"] {
-    --bg: #f4f5f7;
+    --bg: #f9f9f9;
     --surface: #ffffff;
-    --surface-2: #eef0f3;
-    --border: #dcdfe5;
-    --text: #15181e;
-    --muted: #5d6573;
-    --accent-text: #ffffff;
+    --surface-2: #f2f2f2;
+    --border: #e5e5e5;
+    --text: #0f0f0f;
+    --muted: #606060;
+    --blue: #065fd4;
+    --blue-text: #ffffff;
+    --red: #cc0000;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: Inter, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-family: Roboto, Arial, "Segoe UI", sans-serif;
     font-size: 14px;
     line-height: 1.45;
   }
@@ -44,26 +50,19 @@
 
   /* ---------- Barre du haut ---------- */
   .topbar {
-    position: sticky; top: 0; z-index: 20;
+    position: sticky; top: 0; z-index: 40;
+    height: var(--top-h);
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 12px 20px;
+    padding: 0 16px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
   }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
   .brand-mark {
-    width: 30px; height: 30px; border-radius: 8px;
+    width: 32px; height: 24px; border-radius: 7px;
     background: var(--accent); color: var(--accent-text);
     display: grid; place-items: center;
   }
-  .nav { display: inline-flex; gap: 4px; background: var(--surface-2); border-radius: 10px; padding: 3px; }
-  .nav button {
-    min-height: 34px; padding: 0 14px;
-    background: transparent; color: var(--muted);
-    border: none; border-radius: 8px;
-    font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;
-  }
-  .nav button.active { background: var(--accent); color: var(--accent-text); }
   .topbar-actions { display: flex; gap: 8px; }
   .icon-btn {
     min-width: 40px; height: 40px;
@@ -75,6 +74,56 @@
   }
   .icon-btn:hover { border-color: var(--muted); }
   #filters-toggle { display: none; }
+  #menu-toggle { display: none; }
+
+  /* ---------- Menu latéral ---------- */
+  .layout { display: flex; align-items: flex-start; }
+  .sidebar {
+    position: sticky; top: var(--top-h);
+    width: var(--side-w); flex-shrink: 0;
+    height: calc(100vh - var(--top-h));
+    padding: 12px 8px;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 2px;
+    overflow: visible;
+  }
+  .content { flex: 1; min-width: 0; }
+  .side-group { position: relative; }
+  .side-item {
+    width: 100%; min-height: 42px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 10px 0 12px;
+    background: transparent; color: var(--text);
+    border: none; border-radius: 10px;
+    font-size: 14px; font-family: inherit; text-align: left; cursor: pointer;
+  }
+  .side-item:hover { background: var(--surface-2); }
+  .side-item.active { background: var(--surface-2); font-weight: 700; }
+  .si-label { flex: 1; white-space: nowrap; }
+  .si-state {
+    font-size: 10.5px; font-weight: 700; color: var(--accent-text);
+    background: var(--accent); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  }
+  .si-state:empty { display: none; }
+  .side-sep { height: 1px; background: var(--border); margin: 8px 4px; }
+  .sub {
+    display: none;
+    margin: 2px 0 6px 20px; padding: 0 0 0 8px;
+    border-left: 2px solid var(--border);
+  }
+  .sub-item {
+    width: 100%; min-height: 38px; display: flex; align-items: center;
+    padding: 0 12px;
+    background: transparent; color: var(--text);
+    border: none; border-radius: 8px;
+    font-size: 13.5px; font-family: inherit; text-align: left; cursor: pointer;
+  }
+  .sub-item:hover { background: var(--surface-2); }
+  .sub-item.active { background: var(--text); color: var(--bg); font-weight: 700; }
+  .side-group:has(:focus-visible) .sub { display: block; }
+  .side-group.open .sub { display: block; }
+  .backdrop { display: none; }
 
   /* ---------- Contenu ---------- */
   .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
@@ -85,16 +134,6 @@
     padding: 14px;
     margin-bottom: 18px;
   }
-  .seg-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
-  .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; gap: 2px; }
-  .seg button {
-    min-height: 36px; padding: 0 14px;
-    background: transparent; color: var(--muted);
-    border: none; border-radius: 8px;
-    font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;
-  }
-  .seg button.active { background: var(--accent); color: var(--accent-text); }
-  .seg.status button.active { background: var(--blue); color: #fff; }
   .field-row { display: flex; flex-wrap: wrap; gap: 10px; }
   .field-row input, .field-row select {
     height: 40px; padding: 0 12px;
@@ -134,7 +173,7 @@
     padding: 3px 8px; border-radius: 999px; white-space: nowrap;
   }
   .pill.proven { background: var(--green); color: #0b0b0b; }
-  .pill.watchlist { background: var(--blue); color: #fff; }
+  .pill.watchlist { background: var(--blue); color: var(--blue-text); }
   .pill.new { background: var(--accent); color: var(--accent-text); }
   .head-pills { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
   .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; background: var(--border); }
@@ -159,19 +198,18 @@
   .btn-main {
     flex: 1; min-height: 40px;
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    background: var(--accent); color: var(--accent-text);
-    border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 13px;
+    background: var(--text); color: var(--bg);
+    border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 13px;
   }
   .btn-danger {
     width: 40px; min-height: 40px;
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; color: var(--red);
-    border: 1px solid var(--red); border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--red); border-radius: 999px; cursor: pointer;
   }
   .btn-danger:hover { background: var(--red); color: #fff; }
   .btn-danger.labeled { width: auto; padding: 0 12px; gap: 6px; font-size: 12px; font-weight: 700; }
 
-  /* ---------- Fenêtre de choix de la raison ---------- */
   .modal-ov { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.6); display: grid; place-items: center; padding: 16px; }
   .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 10px; }
   .modal h3 { margin: 0; font-size: 15px; }
@@ -221,14 +259,20 @@
   /* ---------- Téléphone et tablette ---------- */
   @media (max-width: 760px) {
     .container { padding: 12px; }
-    .topbar { padding: 10px 12px; flex-wrap: wrap; }
+    .topbar { padding: 0 10px; }
     .brand span.brand-name { display: none; }
+    #menu-toggle { display: inline-flex; }
     #filters-toggle.visible { display: inline-flex; }
+    .sidebar {
+      position: fixed; left: 0; top: var(--top-h); bottom: 0; z-index: 45;
+      height: auto; width: 270px;
+      transform: translateX(-102%); transition: transform .2s ease;
+      overflow-y: auto;
+    }
+    .sidebar.show { transform: translateX(0); }
+    .backdrop.show { display: block; position: fixed; inset: var(--top-h) 0 0 0; z-index: 44; background: rgba(0,0,0,.55); }
     .toolbar { display: none; }
     .toolbar.open { display: block; }
-    .seg-row { flex-direction: column; gap: 10px; }
-    .seg { width: 100%; }
-    .seg button { flex: 1; }
     .field-row select, .field-row input { flex: 1 1 100%; }
     .grid { grid-template-columns: 1fr; }
     .kpis { grid-template-columns: repeat(2, 1fr); }
@@ -242,16 +286,14 @@
 
 <header class="topbar">
   <div class="brand">
+    <button class="icon-btn" id="menu-toggle" aria-label="Menu">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    </button>
     <div class="brand-mark">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
     </div>
     <span class="brand-name">Niche Finder</span>
   </div>
-  <nav class="nav" id="nav">
-    <button class="active" data-page="channels">Chaînes</button>
-    <button data-page="stats">Statistiques</button>
-    <button data-page="competition">Concurrence</button>
-  </nav>
   <div class="topbar-actions">
     <button class="icon-btn visible" id="filters-toggle" aria-label="Filtres">
       <svg viewBox="0 0 24 24"><path d="M3 5h18M6 12h12M10 19h4"/></svg>Filtres
@@ -262,20 +304,51 @@
   </div>
 </header>
 
+<div class="backdrop" id="backdrop"></div>
+<div class="layout">
+
+<aside class="sidebar" id="sidebar">
+  <div class="side-group" data-view="new">
+    <button class="side-item" data-view="new">
+      <svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16v4M17 18h4"/></svg>
+      <span class="si-label">Nouvelles chaînes</span><span class="si-state"></span>
+    </button>
+    <div class="sub">
+      <button class="sub-item" data-view="new" data-status="proven">Proven</button>
+      <button class="sub-item" data-view="new" data-status="watchlist">Watchlist</button>
+      <button class="sub-item" data-view="new" data-status="all">Tout statut</button>
+    </div>
+  </div>
+
+  <div class="side-group" data-view="all">
+    <button class="side-item" data-view="all">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <span class="si-label">Toutes les chaînes</span><span class="si-state"></span>
+    </button>
+    <div class="sub">
+      <button class="sub-item" data-view="all" data-status="proven">Proven</button>
+      <button class="sub-item" data-view="all" data-status="watchlist">Watchlist</button>
+      <button class="sub-item" data-view="all" data-status="all">Tout statut</button>
+    </div>
+  </div>
+
+  <div class="side-sep"></div>
+
+  <button class="side-item" data-page="stats">
+    <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+    <span class="si-label">Statistiques</span>
+  </button>
+  <button class="side-item" data-page="competition">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+    <span class="si-label">Concurrence</span>
+  </button>
+</aside>
+
+<div class="content">
+
 <!-- ===================== PAGE CHAÎNES ===================== -->
 <main class="container" id="page-channels">
   <section class="toolbar" id="toolbar">
-    <div class="seg-row">
-      <div class="seg" id="time-seg">
-        <button class="active" data-view="new">Nouvelles (30 jours)</button>
-        <button data-view="all">Toutes les chaînes</button>
-      </div>
-      <div class="seg status" id="status-seg">
-        <button class="active" data-status="all">Tout statut</button>
-        <button data-status="proven">Proven</button>
-        <button data-status="watchlist">Watchlist</button>
-      </div>
-    </div>
     <div class="field-row">
       <input type="search" id="search" placeholder="Rechercher une chaîne...">
       <select id="market"><option value="all">Tous les marchés</option></select>
@@ -303,11 +376,14 @@
 <!-- ===================== PAGE CONCURRENCE ===================== -->
 <main class="container" id="page-competition" style="display:none"></main>
 
+</div><!-- /content -->
+</div><!-- /layout -->
+
 <script>
 const PAGE_SIZE = 48;
 let adminKey = null;
 let currentView = 'new';
-let currentStatus = 'all';
+let currentStatus = 'proven';
 let currentPage = 'channels';
 let visibleCount = PAGE_SIZE;
 let currentChannels = [];
@@ -346,18 +422,90 @@ $('theme-toggle').addEventListener('click', () => {
 /* ---------- Filtres repliables (téléphone) ---------- */
 $('filters-toggle').addEventListener('click', () => $('toolbar').classList.toggle('open'));
 
-/* ---------- Navigation entre pages ---------- */
+/* ---------- Menu latéral ---------- */
+const STATUS_LABEL = { proven: 'Proven', watchlist: 'Watchlist', all: 'Tout statut' };
+const isTouch = () => window.matchMedia('(hover: none)').matches;
+
+function updateSidebar() {
+  document.querySelectorAll('.side-group').forEach(g => {
+    const on = currentPage === 'channels' && g.dataset.view === currentView;
+    g.querySelector('.side-item').classList.toggle('active', on);
+    g.querySelector('.si-state').textContent = on ? STATUS_LABEL[currentStatus] : '';
+    g.querySelectorAll('.sub-item').forEach(s =>
+      s.classList.toggle('active', on && s.dataset.status === currentStatus));
+  });
+  document.querySelectorAll('.side-item[data-page]').forEach(b =>
+    b.classList.toggle('active', b.dataset.page === currentPage));
+}
+
+function closeMenu() {
+  $('sidebar').classList.remove('show');
+  $('backdrop').classList.remove('show');
+  document.querySelectorAll('.side-group.open').forEach(g => g.classList.remove('open'));
+}
+
 function showPage(page) {
   currentPage = page;
-  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.page === page));
   $('page-channels').style.display = page === 'channels' ? '' : 'none';
   $('page-stats').style.display = page === 'stats' ? '' : 'none';
   $('page-competition').style.display = page === 'competition' ? '' : 'none';
   $('filters-toggle').classList.toggle('visible', page === 'channels');
+  updateSidebar();
   if (page === 'stats') loadStats();
   if (page === 'competition' && window.cpOpen) window.cpOpen();
 }
-document.querySelectorAll('#nav button').forEach(b => b.addEventListener('click', () => showPage(b.dataset.page)));
+
+function selectChannels(view, status) {
+  currentView = view;
+  if (status) currentStatus = status;
+  showPage('channels');
+  loadChannels();
+}
+
+/* Ordinateur : les options apparaissent quand la souris est sur le groupe */
+document.querySelectorAll('.side-group').forEach(g => {
+  let enterTimer = null, leaveTimer = null;
+  g.addEventListener('mouseenter', () => {
+    if (isTouch()) return;
+    clearTimeout(leaveTimer);
+    enterTimer = setTimeout(() => g.classList.add('open'), 60);
+  });
+  g.addEventListener('mouseleave', () => {
+    if (isTouch()) return;
+    clearTimeout(enterTimer);
+    leaveTimer = setTimeout(() => g.classList.remove('open'), 200);
+  });
+});
+
+document.querySelectorAll('.side-group > .side-item').forEach(b => b.addEventListener('click', () => {
+  const group = b.parentElement;
+  if (isTouch()) {
+    // téléphone : un clic ouvre les options sans changer la liste
+    const wasOpen = group.classList.contains('open');
+    document.querySelectorAll('.side-group.open').forEach(g => g.classList.remove('open'));
+    group.classList.toggle('open', !wasOpen);
+    return;
+  }
+  selectChannels(b.dataset.view);
+  b.blur();
+}));
+document.querySelectorAll('.sub-item').forEach(b => b.addEventListener('click', () => {
+  selectChannels(b.dataset.view, b.dataset.status);
+  b.blur();
+  closeMenu();
+}));
+document.querySelectorAll('.side-item[data-page]').forEach(b => b.addEventListener('click', () => {
+  showPage(b.dataset.page);
+  b.blur();
+  closeMenu();
+}));
+$('menu-toggle').addEventListener('click', () => {
+  const open = !$('sidebar').classList.contains('show');
+  $('sidebar').classList.toggle('show', open);
+  $('backdrop').classList.toggle('show', open);
+});
+$('backdrop').addEventListener('click', closeMenu);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
 
 /* ---------- États ---------- */
 function showSkeletons() {
@@ -557,8 +705,6 @@ function openMarket(market) {
   $('market').value = market;
   currentView = 'all';
   currentStatus = 'all';
-  document.querySelectorAll('#time-seg button').forEach(x => x.classList.toggle('active', x.dataset.view === 'all'));
-  document.querySelectorAll('#status-seg button').forEach(x => x.classList.toggle('active', x.dataset.status === 'all'));
   showPage('channels');
   loadChannels();
 }
@@ -634,18 +780,6 @@ async function loadStats() {
 }
 
 /* ---------- Événements ---------- */
-document.querySelectorAll('#time-seg button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('#time-seg button').forEach(x => x.classList.remove('active'));
-  b.classList.add('active');
-  currentView = b.dataset.view;
-  loadChannels();
-}));
-document.querySelectorAll('#status-seg button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('#status-seg button').forEach(x => x.classList.remove('active'));
-  b.classList.add('active');
-  currentStatus = b.dataset.status;
-  loadChannels();
-}));
 $('search').addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(loadChannels, 250);
@@ -655,6 +789,7 @@ $('sort').addEventListener('change', loadChannels);
 $('more-btn').addEventListener('click', () => { visibleCount += PAGE_SIZE; renderGrid(); });
 
 initTheme();
+updateSidebar();
 loadMarkets().then(loadChannels);
 </script>
 <script src="/static/competition.js?v=1"></script>
