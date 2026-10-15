@@ -402,3 +402,10 @@ def build_queries(market: str) -> list[str]:
             queries.append(f"{topic} {formula}")
 
     return queries
+
+
+
+# --- Mots-clés supplémentaires + 3 nouveaux marchés (disasters, geopolitics, mythology) ---
+from config.extra_topics import register as _register_extra  # noqa: E402
+
+_register_extra(MARKETS)

@@ -7,6 +7,9 @@ Usage:
     python -m discovery.search history
     python -m discovery.search history finance military
     python -m discovery.search all
+    python -m discovery.search all --lang en        (par défaut : anglais)
+    python -m discovery.search all --lang others    (espagnol, français, allemand, russe)
+    python -m discovery.search history --lang fr    (une seule langue)
 """
 
 import argparse
@@ -49,7 +52,8 @@ def _safe_get(url: str, params: dict):
     return None
 
 
-def search_videos(query: str, api_key: str, order: str = "viewCount", max_results: int = 25, video_duration: str = "medium") -> list[dict]:
+def search_videos(query: str, api_key: str, order: str = "viewCount", max_results: int = 25,
+                  video_duration: str = "medium", language: str = "en") -> list[dict]:
     params = {
         "part": "snippet",
         "q": query,
@@ -57,7 +61,7 @@ def search_videos(query: str, api_key: str, order: str = "viewCount", max_result
         "order": order,
         "publishedAfter": _published_after(),
         "maxResults": min(max_results, 50),
-        "relevanceLanguage": "en",
+        "relevanceLanguage": language,
         "safeSearch": "moderate",
         "videoDuration": video_duration,
     }
@@ -91,14 +95,15 @@ def search_videos(query: str, api_key: str, order: str = "viewCount", max_result
     return results
 
 
-def discover_market(market_queries: list[str], api_key: str, sleep_between_calls: float = 0.2) -> list[dict]:
+def discover_market(market_queries: list[str], api_key: str, sleep_between_calls: float = 0.2,
+                    language: str = "en") -> list[dict]:
     all_results = {}
 
     for i, query in enumerate(market_queries, 1):
         print(f"[{i}/{len(market_queries)}] Recherche: '{query}'")
 
         for duration in ("medium", "long"):
-            videos = search_videos(query, api_key, order="viewCount", video_duration=duration)
+            videos = search_videos(query, api_key, order="viewCount", video_duration=duration, language=language)
             for v in videos:
                 if v["video_id"] not in all_results:
                     all_results[v["video_id"]] = v
@@ -112,9 +117,9 @@ def discover_market(market_queries: list[str], api_key: str, sleep_between_calls
     return list(all_results.values())
 
 
-def run_for_market(market: str, api_key: str):
+def run_for_market(market: str, api_key: str, language: str = "en"):
     """Retourne (nombre de chaînes validées, quota_épuisé)."""
-    from config.markets import build_queries
+    from config.queries import build_queries
     from discovery.video_stats import enrich_and_filter, dedupe_by_channel
     from discovery.channel_stats import enrich_with_channel_data
     from discovery.language_filter import filter_and_prioritize_by_language
@@ -123,13 +128,13 @@ def run_for_market(market: str, api_key: str):
     from discovery.database import save_validated_channels
 
     print(f"\n{'#' * 60}")
-    print(f"# MARCHÉ : {market.upper()}")
+    print(f"# MARCHÉ : {market.upper()}  (langue de recherche : {language})")
     print(f"{'#' * 60}\n")
 
-    queries = build_queries(market)
+    queries = build_queries(market, language)
     print(f"{len(queries)} requêtes générées pour '{market}'.\n")
 
-    results = discover_market(queries, api_key)
+    results = discover_market(queries, api_key, language=language)
     print(f"\n=== {len(results)} vidéos uniques trouvées (60 derniers jours) ===")
 
     # Chaînes supprimées par l'utilisateur : on ne les retraite jamais (économise du quota).
@@ -199,12 +204,18 @@ def run_for_market(market: str, api_key: str):
 
 if __name__ == "__main__":
     from config.markets import MARKETS
+    from config.queries import LANGUAGES, OTHER_LANGUAGES
 
     parser = argparse.ArgumentParser(description="Découverte de chaînes faceless émergentes par marché.")
     parser.add_argument(
         "markets",
         nargs="+",
         help="Un ou plusieurs marchés à traiter (ex: history finance military), ou 'all' pour tous les marchés définis.",
+    )
+    parser.add_argument(
+        "--lang",
+        default="en",
+        help="Langue de recherche : en (défaut), es, fr, de, ru, ou 'others' (es+fr+de+ru).",
     )
     args = parser.parse_args()
 
@@ -222,20 +233,36 @@ if __name__ == "__main__":
         if unknown:
             raise SystemExit(f"Marché(s) inconnu(s): {unknown}. Marchés disponibles: {list(MARKETS.keys())}")
 
+    lang_arg = args.lang.lower()
+    if lang_arg == "others":
+        languages_to_run = list(OTHER_LANGUAGES)
+    elif lang_arg in LANGUAGES:
+        languages_to_run = [lang_arg]
+    else:
+        raise SystemExit(f"Langue inconnue: {args.lang}. Choix : {LANGUAGES + ['others']}")
+
     print(f"{key_count()} clé(s) API chargée(s).")
-    print(f"Marchés à traiter : {markets_to_run}\n")
+    print(f"Marchés à traiter : {markets_to_run}")
+    print(f"Langues de recherche : {languages_to_run}\n")
 
     summary = {}
-    for market in markets_to_run:
-        try:
-            count, quota_stopped = run_for_market(market, api_key)
-        except QuotaExhaustedError:
-            print(f"\n[!] Toutes les clés sont épuisées pendant la recherche de '{market}'. Arrêt.")
-            summary[market] = "interrompu (quota)"
-            break
-        summary[market] = count
-        if quota_stopped:
-            print("\n[!] Quota épuisé sur toutes les clés : les marchés suivants ne sont pas lancés.")
+    stop_all = False
+    for language in languages_to_run:
+        for market in markets_to_run:
+            label = f"{market} [{language}]"
+            try:
+                count, quota_stopped = run_for_market(market, api_key, language)
+            except QuotaExhaustedError:
+                print(f"\n[!] Toutes les clés sont épuisées pendant la recherche de '{label}'. Arrêt.")
+                summary[label] = "interrompu (quota)"
+                stop_all = True
+                break
+            summary[label] = count
+            if quota_stopped:
+                print("\n[!] Quota épuisé sur toutes les clés : les marchés suivants ne sont pas lancés.")
+                stop_all = True
+                break
+        if stop_all:
             break
 
     print(f"\n{'=' * 60}")
