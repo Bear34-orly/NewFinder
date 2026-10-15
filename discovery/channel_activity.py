@@ -103,7 +103,7 @@ def get_video_stats_batch(video_ids: list[str], api_key: str) -> list[dict]:
     all_stats = []
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i + 50]
-        params = {"part": "statistics", "id": ",".join(batch)}
+        params = {"part": "statistics,snippet", "id": ",".join(batch)}
 
         resp = _safe_get(YOUTUBE_VIDEOS_URL, params)
         if resp is None or resp.status_code != 200:
@@ -112,7 +112,8 @@ def get_video_stats_batch(video_ids: list[str], api_key: str) -> list[dict]:
         data = resp.json()
         for item in data.get("items", []):
             views = int(item.get("statistics", {}).get("viewCount", 0))
-            all_stats.append({"video_id": item["id"], "view_count": views})
+            title = item.get("snippet", {}).get("title", "")
+            all_stats.append({"video_id": item["id"], "view_count": views, "title": title})
         time.sleep(0.1)
 
     return all_stats
@@ -172,6 +173,7 @@ def validate_channel_activity(channel: dict, api_key: str) -> dict:
         "strong_video_count": len(strong_videos),
         "proven_video_count": len(proven_videos),
         "strong_videos": strong_videos,
+        "proven_videos": proven_videos,
         "total_videos_checked": len(check["video_ids"]),
         "recent_thumbnail_ids": recent_thumbnail_ids,
     }

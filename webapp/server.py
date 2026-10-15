@@ -105,7 +105,8 @@ def api_delete_channel(channel_id):
     if provided_key != ADMIN_KEY:
         return jsonify({"error": "Clé admin invalide"}), 403
 
-    deleted = delete_channel(channel_id)
+    reason = request.args.get("reason", "unknown")
+    deleted = delete_channel(channel_id, reason)
     _invalidate_cache()
     if deleted:
         return jsonify({"status": "deleted", "channel_id": channel_id})

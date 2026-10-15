@@ -132,6 +132,14 @@ def run_for_market(market: str, api_key: str):
     results = discover_market(queries, api_key)
     print(f"\n=== {len(results)} vidéos uniques trouvées (60 derniers jours) ===")
 
+    # Chaînes supprimées par l'utilisateur : on ne les retraite jamais (économise du quota).
+    from discovery.database import list_rejected_ids
+    rejected = list_rejected_ids()
+    if rejected:
+        before = len(results)
+        results = [r for r in results if r["channel_id"] not in rejected]
+        print(f"=== {before - len(results)} vidéos ignorées (chaînes déjà refusées) ===")
+
     print("\nRécupération des stats de vues + langue déclarée...")
     enriched = enrich_and_filter(results, api_key, min_views=20_000)
     print(f"=== {len(enriched)} vidéos avec >= 20K vues ===")
