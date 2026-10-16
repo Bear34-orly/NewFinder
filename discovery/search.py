@@ -131,8 +131,22 @@ def run_for_market(market: str, api_key: str, language: str = "en"):
     print(f"# MARCHÉ : {market.upper()}  (langue de recherche : {language})")
     print(f"{'#' * 60}\n")
 
-    queries = build_queries(market, language)
-    print(f"{len(queries)} requêtes générées pour '{market}'.\n")
+    seeds = build_queries(market, language)
+    learned = {"queries": [], "active": [], "tests": [], "new": [], "info": None}
+    try:
+        from discovery.keyword_engine import plan_learned_queries
+        learned = plan_learned_queries(market, language, seeds)
+    except Exception as e:
+        print(f"  (mots-clés appris ignorés : {type(e).__name__}: {e})")
+    seed_keys = {s.lower() for s in seeds}
+    queries = seeds + [q for q in learned["queries"] if q.lower() not in seed_keys]
+    print(f"{len(seeds)} requêtes de départ + {len(queries) - len(seeds)} mot(s)-clé(s) appris pour '{market}'.")
+    for label, items in (("ACTIF", learned["active"]), ("EN TEST", learned["tests"]), ("NOUVEAU", learned["new"])):
+        for kw in items:
+            print(f"    + [{label}] {kw['query']}")
+    if learned["info"] and not learned["info"]["enough_data"]:
+        print("    (pas encore assez de titres pour apprendre de nouveaux mots-clés sur ce marché)")
+    print()
 
     results = discover_market(queries, api_key, language=language)
     print(f"\n=== {len(results)} vidéos uniques trouvées (60 derniers jours) ===")
@@ -215,7 +229,33 @@ def run_for_market(market: str, api_key: str, language: str = "en"):
               f"{v['strong_video_count']} vidéos fortes sur {v['total_videos_checked']} vidéos")
         print(f"    {v['channel_url']}")
 
+    # Chaînes déjà en base avant cette passe (pour savoir lesquelles sont vraiment nouvelles).
+    known_before = None
+    if learned["queries"]:
+        try:
+            from discovery.database import existing_channel_ids
+            known_before = existing_channel_ids([v["channel_id"] for v in validated])
+        except Exception as e:
+            print(f"  (mots-clés appris non jugés cette fois : {type(e).__name__}: {e})")
+
     save_validated_channels(validated, market=market)
+
+    # Jugement des mots-clés appris (seulement si la passe est allée au bout).
+    if learned["queries"] and known_before is not None:
+        if quota_stopped:
+            print("\nMots-clés appris : passe incomplète (quota épuisé), résultats non comptés.")
+        else:
+            try:
+                from discovery.keyword_engine import record_pass_results
+                summary = record_pass_results(market, language, learned, seeds,
+                                              with_channels, validated, known_before)
+                print("\nMots-clés appris, résultat de la passe :")
+                for s in summary:
+                    change = "" if s["old_status"] == s["new_status"] else f" -> {s['new_status'].upper()}"
+                    print(f"  - {s['query']}: {s['found']} chaîne(s) trouvée(s), "
+                          f"{s['fresh']} nouvelle(s) validée(s) (passe {s['times_run']}){change}")
+            except Exception as e:
+                print(f"  (jugement des mots-clés ignoré : {type(e).__name__}: {e})")
 
     return len(validated), quota_stopped
 

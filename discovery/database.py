@@ -440,3 +440,145 @@ def update_face_scores(channel_id: str, face_ratio: float | None = None,
             updated = cur.rowcount > 0
         conn.commit()
     return updated
+
+
+# ---------------------------------------------------------------------------
+# Moteur de mots-clés (étape 4)
+# ---------------------------------------------------------------------------
+
+def existing_channel_ids(channel_ids: list[str]) -> set:
+    """Parmi ces identifiants, ceux qui sont DÉJÀ dans la table channels."""
+    if not channel_ids:
+        return set()
+    init_db()
+    with pooled_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT channel_id FROM channels WHERE channel_id = ANY(%s)", (list(channel_ids),))
+            return {r[0] for r in cur.fetchall()}
+
+
+def load_keyword_corpus(market: str, language: str) -> tuple[list[dict], list[dict]]:
+    """
+    Titres servant à apprendre des mots-clés pour un marché et une langue.
+
+    Retourne (positifs, négatifs) :
+      - positifs : titres des vidéos fortes des chaînes ENCORE en base ;
+      - négatifs : titres des chaînes supprimées par l'utilisateur pour 'face' ou 'topic'
+        (on ne veut pas apprendre ce qui ramène ce type de chaînes).
+    Chaque ligne : {channel_id, title, views}. Les chaînes supprimées sans raison ('unknown')
+    sont ignorées des deux côtés.
+    """
+    init_db()
+    with pooled_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT vt.channel_id, vt.title, vt.views
+                FROM video_titles vt
+                JOIN channels c ON c.channel_id = vt.channel_id
+                WHERE vt.market = %s AND vt.language = %s AND vt.title IS NOT NULL
+            """, (market, language))
+            positives = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT vt.channel_id, vt.title, vt.views
+                FROM video_titles vt
+                JOIN rejected_channels r ON r.channel_id = vt.channel_id
+                WHERE vt.market = %s AND vt.language = %s AND vt.title IS NOT NULL
+                  AND r.reject_reason IN ('face', 'topic')
+            """, (market, language))
+            negatives = [dict(r) for r in cur.fetchall()]
+
+            # Meilleure vidéo des chaînes refusées (au cas où leurs titres n'aient pas été enregistrés)
+            cur.execute("""
+                SELECT channel_id, best_video_title AS title, 0 AS views
+                FROM rejected_channels
+                WHERE market = %s AND detected_language = %s AND best_video_title IS NOT NULL
+                  AND reject_reason IN ('face', 'topic')
+            """, (market, language))
+            negatives += [dict(r) for r in cur.fetchall()]
+    return positives, negatives
+
+
+def list_keywords(market: str | None = None, language: str | None = None,
+                  statuses: list[str] | None = None) -> list[dict]:
+    """Mots-clés appris, bannis ou retirés (les seeds sont dans la configuration, pas ici)."""
+    init_db()
+    sql = ("SELECT market, language, query, status, source, times_run, channels_found, "
+           "validated_found, created_at, last_run_at FROM keywords WHERE TRUE")
+    params = []
+    if market:
+        sql += " AND market = %s"
+        params.append(market)
+    if language:
+        sql += " AND language = %s"
+        params.append(language)
+    if statuses:
+        sql += " AND status = ANY(%s)"
+        params.append(list(statuses))
+    sql += " ORDER BY market, language, status, created_at"
+    with pooled_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+def add_keyword(market: str, language: str, query: str, status: str = "test",
+                source: str = "learned") -> bool:
+    """Ajoute un mot-clé (sans rien écraser s'il existe déjà). Retourne True si ajouté."""
+    init_db()
+    now = datetime.now(timezone.utc).isoformat()
+    with pooled_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO keywords (market, language, query, status, source, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (market, language, query) DO NOTHING
+            """, (market, language, query, status, source, now))
+            added = cur.rowcount > 0
+        conn.commit()
+    return added
+
+
+def ban_keyword(market: str, language: str, query: str) -> None:
+    """Interdit un mot-clé : il ne sera plus jamais proposé ni testé."""
+    init_db()
+    now = datetime.now(timezone.utc).isoformat()
+    with pooled_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO keywords (market, language, query, status, source, created_at)
+                VALUES (%s, %s, %s, 'banned', 'manual', %s)
+                ON CONFLICT (market, language, query) DO UPDATE SET status = 'banned'
+            """, (market, language, query, now))
+        conn.commit()
+
+
+def unban_keyword(market: str, language: str, query: str) -> bool:
+    """Lève l'interdiction (la ligne est supprimée : le mot-clé pourra être reproposé)."""
+    init_db()
+    with pooled_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM keywords WHERE market = %s AND language = %s AND query = %s "
+                        "AND status = 'banned'", (market, language, query))
+            removed = cur.rowcount > 0
+        conn.commit()
+    return removed
+
+
+def record_keyword_run(market: str, language: str, query: str, channels_found: int,
+                       validated_found: int, new_status: str) -> None:
+    """Ajoute les résultats d'une passe à un mot-clé et met à jour son statut."""
+    init_db()
+    now = datetime.now(timezone.utc).isoformat()
+    with pooled_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE keywords SET
+                    times_run = times_run + 1,
+                    channels_found = channels_found + %s,
+                    validated_found = validated_found + %s,
+                    status = %s,
+                    last_run_at = %s
+                WHERE market = %s AND language = %s AND query = %s
+            """, (channels_found, validated_found, new_status, now, market, language, query))
+        conn.commit()
