@@ -1,10 +1,11 @@
 """
 Étape 4 — Moteur de mots-clés.
 
-Il lit les titres des vidéos fortes déjà trouvées, repère les expressions de
-2-3 mots qui reviennent chez plusieurs chaînes, et les teste comme nouvelles
-recherches. Celles qui ramènent de NOUVELLES chaînes validées sont gardées
-("actif"), les autres sont abandonnées ("retiré").
+Il lit les titres des vidéos fortes déjà trouvées et propose deux sortes de nouvelles recherches :
+  - des expressions collées de 2-3 mots qui reviennent chez plusieurs chaînes ;
+  - des mélanges : un mot-clé de départ + un mot fréquent qui apparaît avec lui dans les titres.
+Celles qui ramènent de NOUVELLES chaînes validées sont gardées ("actif"), les autres
+sont abandonnées ("retiré").
 
 Cycle de vie d'un mot-clé (table keywords, colonne status) :
     test    -> en essai (relancé à chaque passe, jusqu'à RETIRE_AFTER_RUNS passes)
@@ -22,7 +23,8 @@ recherches de test en consomment (2 recherches par expression, comme les seeds).
 import re
 
 from config.keyword_settings import (
-    GENERIC_WORDS, MAX_ACTIVE_PER_MARKET, MIN_CHANNELS_PER_PHRASE, MIN_CORPUS_CHANNELS,
+    GENERIC_WORDS, MAX_ACTIVE_PER_MARKET, MIN_CHANNELS_PER_MIX, MIN_CHANNELS_PER_PARTIAL_MIX,
+    MIN_CHANNELS_PER_PHRASE, MIN_CORPUS_CHANNELS, MIX_ALLOW_PARTIAL_SEED,
     MIN_CORPUS_TITLES, MIN_SEED_SHARE, NEGATIVE_SHARE_MAX, NEW_TESTS_PER_PASS, PHRASE_SIZES,
     PROMOTE_MIN_VALIDATED, REQUIRE_MARKET_WORD, RETIRE_AFTER_RUNS, STOPWORDS, TEST_QUOTA_SHARE,
 )
@@ -213,23 +215,187 @@ def propose_candidates(positives: list[dict], negatives: list[dict], language: s
 def pick_non_overlapping(candidates: list[dict], count: int, known: list, language: str = "en") -> list[dict]:
     """
     Prend les `count` meilleures expressions qui ne se recouvrent pas entre elles :
-    ni l'une dans l'autre, ni avec un mot utile en commun (pour tester des sujets différents).
+    ni l'une dans l'autre, ni avec un mot nouveau en commun (pour tester des sujets différents).
+    Deux mélanges ne partent jamais du même mot-clé de départ dans la même passe.
     """
     picked = []
     taken = list(known)
     used_words = set()
+    used_seeds = set()
     for c in candidates:
         if len(picked) >= count:
             break
-        if _overlaps(c["words"], taken):
+        if c.get("kind") != "mixed" and _overlaps(c["words"], taken):
             continue
-        useful = {w for w in c["words"] if not _is_stop(w, language)}
-        if useful & used_words:
+        if c.get("kind") == "mixed" and _overlaps(c["words"], [t for t in taken if t not in known]):
+            continue
+        novel = c.get("novel_words")
+        if novel is None:
+            novel = {w for w in c["words"] if w and not _is_stop(w, language)}
+        if novel & used_words:
+            continue
+        seed_key = c.get("seed_key")
+        if seed_key is not None and seed_key in used_seeds:
             continue
         picked.append(c)
         taken.append(c["words"])
-        used_words |= useful
+        used_words |= novel
+        if seed_key is not None:
+            used_seeds.add(seed_key)
     return picked
+
+
+# ---------------------------------------------------------------------------
+# Mélanges : mot-clé de départ + mot fréquent des titres
+# ---------------------------------------------------------------------------
+
+def _useful_words(text: str, language: str) -> list:
+    generic = GENERIC_WORDS.get(language, ())
+    out = []
+    for seg in _segments(text, language):
+        for w in seg:
+            if w and not _is_stop(w, language) and w not in generic and len(w) >= 3:
+                out.append(w)
+    return out
+
+
+def base_seeds(seeds: list[str], language: str) -> list[dict]:
+    """
+    Mots-clés de départ "de base" : on écarte ceux qui sont une variante d'un autre
+    (ex : 'ancient civilizations explained' vient de 'ancient civilizations').
+    Retourne [{"text", "words" (tuple), "core" (frozenset)}].
+    """
+    items = []
+    seen = set()
+    for sd in seeds:
+        core = frozenset(_useful_words(sd, language))
+        if not core or core in seen:
+            continue
+        seen.add(core)
+        items.append({"text": sd.strip().lower(), "words": phrase_words(sd, language), "core": core})
+    return [a for a in items if not any(b["core"] < a["core"] for b in items)]
+
+
+def _count_mixed(rows: list[dict], bases: list[dict], language: str) -> dict:
+    """
+    {(index du seed, mot): {"full": {...}, "partial": {...}}}
+      full    : titres qui contiennent TOUS les mots du mot-clé de départ
+      partial : titres qui contiennent AU MOINS UN mot du mot-clé de départ (les "full" y sont inclus)
+    chaque entrée : {channels, views, titles, example}
+    """
+    stats = {}
+
+    def add(entry, r, title):
+        if entry is None:
+            entry = {"channels": set(), "views": 0, "titles": 0, "example": title}
+        entry["channels"].add(r.get("channel_id"))
+        entry["views"] += r.get("views") or 0
+        entry["titles"] += 1
+        return entry
+
+    for r in rows:
+        title = r.get("title") or ""
+        tw = set(_useful_words(title, language))
+        if not tw:
+            continue
+        for i, b in enumerate(bases):
+            hit = b["core"] & tw
+            if not hit:
+                continue
+            is_full = b["core"] <= tw
+            for w in tw - b["core"]:
+                slot = stats.setdefault((i, w), {"full": None, "partial": None})
+                if is_full:
+                    slot["full"] = add(slot["full"], r, title)
+                if MIX_ALLOW_PARTIAL_SEED:
+                    slot["partial"] = add(slot["partial"], r, title)
+    return stats
+
+
+def _best_mode(slot: dict | None):
+    """Mode retenu pour un couple : 'full' (>= MIN_CHANNELS_PER_MIX) sinon 'partial' (>= MIN_CHANNELS_PER_PARTIAL_MIX)."""
+    if not slot:
+        return None
+    if slot.get("full") and len(slot["full"]["channels"]) >= MIN_CHANNELS_PER_MIX:
+        return "full"
+    if slot.get("partial") and len(slot["partial"]["channels"]) >= MIN_CHANNELS_PER_PARTIAL_MIX:
+        return "partial"
+    return None
+
+
+def propose_mixed(positives: list[dict], negatives: list[dict], language: str,
+                  seeds: list[str], learned: list, banned: list) -> dict:
+    """
+    Candidats "mélangés" : un mot-clé de départ + un mot qui apparaît avec lui dans les titres.
+    Un couple est retenu si :
+      - des titres contenant TOUS les mots du mot-clé de départ viennent d'au moins MIN_CHANNELS_PER_MIX chaînes, ou
+      - des titres contenant AU MOINS UN de ses mots viennent d'au moins MIN_CHANNELS_PER_PARTIAL_MIX chaînes
+        (si MIX_ALLOW_PARTIAL_SEED).
+    learned : mots-clés déjà dans la table (tuples de mots) ; banned : interdits (tuples).
+    """
+    info = {"mixed_too_few": 0, "mixed_refused": 0, "mixed_known": 0, "mixed_banned": 0}
+    bases = base_seeds(seeds, language)
+    if not bases:
+        return {"candidates": [], "info": info}
+    pos = _count_mixed(positives, bases, language)
+    neg = _count_mixed(negatives, bases, language) if negatives else {}
+    seed_words = {phrase_words(sd, language) for sd in seeds}
+    all_core = set().union(*(b["core"] for b in bases))     # mots déjà présents dans un mot-clé de départ
+
+    candidates = []
+    for key, slot in pos.items():
+        i, w = key
+        if w in all_core:                                    # éviter 'ancient egypt civilizations'
+            continue
+        mode = _best_mode(slot)
+        if mode is None:
+            info["mixed_too_few"] += 1
+            continue
+        st = slot[mode]
+        n = len(st["channels"])
+        neg_slot = neg.get(key)
+        neg_n = len(neg_slot[mode]["channels"]) if neg_slot and neg_slot.get(mode) else 0
+        if neg_n and neg_n / (neg_n + n) >= NEGATIVE_SHARE_MAX:
+            info["mixed_refused"] += 1
+            continue
+        b = bases[i]
+        words = b["words"] + (w,)
+        if words in seed_words or _overlaps(words, learned):
+            info["mixed_known"] += 1
+            continue
+        if any(_contains(words, bb) for bb in banned if bb):
+            info["mixed_banned"] += 1
+            continue
+        candidates.append({"words": words, "phrase": f"{b['text']} {w}", "channels": n,
+                           "views": st["views"], "titles": st["titles"], "example": st["example"],
+                           "refused_channels": neg_n, "kind": "mixed", "mix_mode": mode,
+                           "novel_words": {w}, "seed_key": i})
+    candidates.sort(key=lambda c: (-c["channels"], c["mix_mode"] != "full", -c["views"], c["phrase"]))
+    return {"candidates": candidates, "info": info}
+
+
+def propose_all(positives: list[dict], negatives: list[dict], language: str, seeds: list[str],
+                learned: list, banned: list, market_words: set | None = None) -> dict:
+    """
+    Expressions collées (propose_candidates) et mélanges (propose_mixed), en alternance :
+    meilleure expression, meilleur mélange, deuxième expression, deuxième mélange...
+    """
+    known = [phrase_words(s, language) for s in seeds] + list(learned)
+    res = propose_candidates(positives, negatives, language, known, banned, market_words)
+    info = dict(res["info"])
+    info.update({"mixed_too_few": 0, "mixed_refused": 0, "mixed_known": 0, "mixed_banned": 0})
+    if not info["enough_data"]:
+        return {"candidates": [], "info": info}
+    mixed = propose_mixed(positives, negatives, language, seeds, learned, banned)
+    info.update(mixed["info"])
+    phrases, mixes = res["candidates"], mixed["candidates"]
+    merged = []
+    for k in range(max(len(phrases), len(mixes))):
+        if k < len(phrases):
+            merged.append(phrases[k])
+        if k < len(mixes):
+            merged.append(mixes[k])
+    return {"candidates": merged, "info": info}
 
 
 # ---------------------------------------------------------------------------
@@ -285,14 +451,15 @@ def plan_learned_queries(market: str, language: str, seeds: list[str]) -> dict:
 
     new_rows = []
     if new_count > 0:
-        known = [phrase_words(s, language) for s in seeds] + [phrase_words(r["query"], language) for r in rows]
+        learned = [phrase_words(r["query"], language) for r in rows]
+        known = [phrase_words(s, language) for s in seeds] + learned
         banned = [phrase_words(r["query"], language) for r in rows if r["status"] == "banned"]
         positives, negatives = load_keyword_corpus(market, language)
         vocab = market_vocabulary(market, language, seeds)
-        proposal = propose_candidates(positives, negatives, language, known, banned, vocab)
+        proposal = propose_all(positives, negatives, language, seeds, learned, banned, vocab)
         result["info"] = proposal["info"]
         for c in pick_non_overlapping(proposal["candidates"], new_count, known, language):
-            if add_keyword(market, language, c["phrase"], status="test", source="learned"):
+            if add_keyword(market, language, c["phrase"], status="test", source=c.get("kind", "learned")):
                 new_rows.append({"query": c["phrase"], "status": "test", "times_run": 0,
                                  "channels_found": 0, "validated_found": 0,
                                  "channels": c["channels"], "example": c["example"]})

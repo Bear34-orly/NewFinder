@@ -19,7 +19,7 @@ from discovery.database import (
     ban_keyword, list_keywords, load_keyword_corpus, unban_keyword,
 )
 from discovery.keyword_engine import (
-    market_vocabulary, normalize_phrase, phrase_words, pick_non_overlapping, propose_candidates, slot_budget,
+    market_vocabulary, normalize_phrase, phrase_words, pick_non_overlapping, propose_all, slot_budget,
 )
 
 STATUS_LABEL = {"active": "ACTIF", "test": "EN TEST", "retired": "RETIRÉ", "banned": "BANNI"}
@@ -58,10 +58,11 @@ def _print_suggestions(market: str, language: str):
     seeds = build_queries(market, language)
     rows = list_keywords(market, language)
     positives, negatives = load_keyword_corpus(market, language)
-    known = [phrase_words(s, language) for s in seeds] + [phrase_words(r["query"], language) for r in rows]
+    learned = [phrase_words(r["query"], language) for r in rows]
+    known = [phrase_words(s, language) for s in seeds] + learned
     banned = [phrase_words(r["query"], language) for r in rows if r["status"] == "banned"]
     vocab = market_vocabulary(market, language, seeds)
-    result = propose_candidates(positives, negatives, language, known, banned, vocab)
+    result = propose_all(positives, negatives, language, seeds, learned, banned, vocab)
     info = result["info"]
     budget = slot_budget(len(seeds))
 
@@ -75,12 +76,15 @@ def _print_suggestions(market: str, language: str):
     print(f"Écartées : {info['too_few_channels']} (moins de 3 chaînes), {info['excluded_refused']} (viennent de chaînes refusées), "
           f"{info['excluded_known']} (déjà couvertes par un mot-clé), {info['excluded_banned']} (bannies), "
           f"{info['excluded_off_market']} (hors du sujet du marché).")
+    print(f"Mélanges écartés : {info['mixed_too_few']} (pas assez de chaînes), {info['mixed_refused']} (chaînes refusées), "
+          f"{info['mixed_known']} (déjà connus), {info['mixed_banned']} (bannis).")
     if not result["candidates"]:
         print("Aucune expression candidate pour l'instant.")
         return
     print("\nMeilleures candidates (sans doublons entre elles) :")
     for c in pick_non_overlapping(result["candidates"], 15, known, language):
-        print(f"  {c['phrase']:<40} {c['channels']} chaînes  ex : {c['example'][:70]}")
+        kind = "mélange" if c.get("kind") == "mixed" else "phrase "
+        print(f"  [{kind}] {c['phrase']:<42} {c['channels']} chaînes  ex : {c['example'][:60]}")
 
 
 def main():
