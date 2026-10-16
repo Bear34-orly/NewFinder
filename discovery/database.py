@@ -114,6 +114,14 @@ def init_db():
         # Raison du refus : 'face' (a un visage), 'topic' (sujet sans intérêt), 'unknown'
         cur.execute("ALTER TABLE rejected_channels ADD COLUMN IF NOT EXISTS reject_reason TEXT")
 
+        # Indices "visage" (filtre faceless v2) : part des miniatures avec un grand visage,
+        # part des miniatures montrant la même personne, part des titres avec un signal de texte.
+        for table in ("channels", "rejected_channels"):
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS face_ratio DOUBLE PRECISION")
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS same_face_ratio DOUBLE PRECISION")
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS face_text_ratio DOUBLE PRECISION")
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS face_checked_at TEXT")
+
         # Titres des vidéos fortes (matière première de l'apprentissage des mots-clés)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS video_titles (
@@ -176,10 +184,15 @@ def save_validated_channels(channels: list[dict], market: str):
                     strong_video_count, proven_video_count, total_videos_checked,
                     density_score, view_sub_ratio, detected_language,
                     best_video_title, best_video_id, first_discovered_at,
-                    last_checked_at, query_source
+                    last_checked_at, query_source,
+                    face_ratio, same_face_ratio, face_text_ratio, face_checked_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                          %s, %s, %s, %s, %s, %s, %s, %s)
+                          %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (channel_id) DO UPDATE SET
+                    face_ratio = COALESCE(EXCLUDED.face_ratio, channels.face_ratio),
+                    same_face_ratio = COALESCE(EXCLUDED.same_face_ratio, channels.same_face_ratio),
+                    face_text_ratio = COALESCE(EXCLUDED.face_text_ratio, channels.face_text_ratio),
+                    face_checked_at = COALESCE(EXCLUDED.face_checked_at, channels.face_checked_at),
                     subscriber_count = EXCLUDED.subscriber_count,
                     video_count = EXCLUDED.video_count,
                     strong_video_count = EXCLUDED.strong_video_count,
@@ -205,6 +218,8 @@ def save_validated_channels(channels: list[dict], market: str):
                 c.get("density_score"), c.get("view_sub_ratio"),
                 c.get("detected_language"), c.get("title"), c.get("video_id"),
                 now, now, c.get("query_source"),
+                c.get("face_ratio"), c.get("same_face_ratio"),
+                c.get("face_text_ratio"), c.get("face_checked_at"),
             ))
 
             _insert_titles(cur, c["channel_id"], market, c.get("detected_language"),
@@ -284,9 +299,11 @@ def delete_channel(channel_id: str, reason: str = "unknown") -> bool:
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO rejected_channels (channel_id, channel_title, market, detected_language,
-                                               best_video_title, query_source, rejected_at, reject_reason)
+                                               best_video_title, query_source, rejected_at, reject_reason,
+                                               face_ratio, same_face_ratio, face_text_ratio, face_checked_at)
                 SELECT channel_id, channel_title, market, detected_language,
-                       best_video_title, query_source, %s, %s
+                       best_video_title, query_source, %s, %s,
+                       face_ratio, same_face_ratio, face_text_ratio, face_checked_at
                 FROM channels WHERE channel_id = %s
                 ON CONFLICT (channel_id) DO NOTHING
             """, (datetime.now(timezone.utc).isoformat(), reason, channel_id))
@@ -338,6 +355,88 @@ def update_channel_stats(channel_id: str, stats: dict) -> bool:
                 stats.get("total_videos_checked"), stats.get("density_score"),
                 stats.get("channel_status"), recent_ids, now, channel_id,
             ))
+            updated = cur.rowcount > 0
+        conn.commit()
+    return updated
+
+
+def list_channels_for_face_scan(refresh: bool = False, market: str | None = None,
+                                max_videos: int = 6) -> list[dict]:
+    """
+    Chaînes à analyser pour les visages : par défaut celles jamais analysées.
+    Pour chaque chaîne : ses vidéos les plus vues (table video_titles), sinon ses
+    vidéos récentes, et tous ses titres (pour le score de texte).
+    Retourne [{channel_id, channel_title, language, titles, video_ids}].
+    """
+    init_db()
+    with pooled_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            sql = ("SELECT channel_id, channel_title, detected_language, best_video_title, "
+                   "recent_video_ids FROM channels WHERE TRUE")
+            params = []
+            if not refresh:
+                sql += " AND face_checked_at IS NULL"
+            if market:
+                sql += " AND market = %s"
+                params.append(market)
+            cur.execute(sql, params)
+            rows = [dict(r) for r in cur.fetchall()]
+            if not rows:
+                return []
+
+            ids = [r["channel_id"] for r in rows]
+            cur.execute("""
+                SELECT channel_id, video_id, title FROM (
+                    SELECT channel_id, video_id, title,
+                           ROW_NUMBER() OVER (PARTITION BY channel_id ORDER BY views DESC NULLS LAST) AS rn
+                    FROM video_titles WHERE channel_id = ANY(%s)
+                ) t ORDER BY channel_id, rn
+            """, (ids,))
+            top, titles = {}, {}
+            for r in cur.fetchall():
+                titles.setdefault(r["channel_id"], []).append(r["title"])
+                if len(top.setdefault(r["channel_id"], [])) < max_videos:
+                    top[r["channel_id"]].append(r["video_id"])
+
+    result = []
+    for r in rows:
+        vids = top.get(r["channel_id"])
+        if not vids:
+            try:
+                vids = json.loads(r.get("recent_video_ids") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                vids = []
+        all_titles = list(titles.get(r["channel_id"], []))
+        if r.get("best_video_title"):
+            all_titles.append(r["best_video_title"])
+        result.append({"channel_id": r["channel_id"], "channel_title": r["channel_title"] or r["channel_id"],
+                       "language": r.get("detected_language"), "titles": all_titles,
+                       "video_ids": (vids or [])[:max_videos]})
+    return result
+
+
+def update_face_scores(channel_id: str, face_ratio: float | None = None,
+                       same_face_ratio: float | None = None,
+                       text_ratio: float | None = None) -> bool:
+    """
+    Enregistre les indices "visage" d'une chaîne déjà enregistrée (ne touche à rien d'autre).
+    Les valeurs absentes (None) ne modifient rien. Les indices de miniatures
+    (face_ratio, same_face_ratio) posent aussi la date d'analyse.
+    """
+    init_db()
+    sets, params = [], []
+    if face_ratio is not None and same_face_ratio is not None:
+        sets += ["face_ratio = %s", "same_face_ratio = %s", "face_checked_at = %s"]
+        params += [face_ratio, same_face_ratio, datetime.now(timezone.utc).isoformat()]
+    if text_ratio is not None:
+        sets.append("face_text_ratio = %s")
+        params.append(text_ratio)
+    if not sets:
+        return False
+    params.append(channel_id)
+    with pooled_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE channels SET {', '.join(sets)} WHERE channel_id = %s", params)
             updated = cur.rowcount > 0
         conn.commit()
     return updated

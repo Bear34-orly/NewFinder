@@ -189,6 +189,8 @@
   .tag.good { background: var(--green); color: #0b0b0b; }
   .tag.mid { background: var(--amber); color: #0b0b0b; }
   .tag.low { background: var(--surface-2); color: var(--muted); }
+  .tag.face { background: var(--amber); color: #0b0b0b; cursor: help; display: inline-flex; align-items: center; padding: 3px 6px; }
+  .tag.face svg { width: 16px; height: 16px; stroke-width: 2.2; }
   .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .stat { background: var(--surface-2); border-radius: 8px; padding: 8px; text-align: center; }
   .stat b { display: block; font-size: 15px; }
@@ -581,6 +583,7 @@ function renderCard(c) {
         <span class="tag">${esc(capitalize(c.market || '?'))}</span>
         <span class="tag ${densityClass(score)}">${Math.round(score * 100)}% densité</span>
         ${c.detected_language ? `<span class="tag">${esc(c.detected_language)}</span>` : ''}
+        ${c.face_flag ? `<span class="tag face" title="Visage ? ${esc(c.face_hint || '')}" aria-label="Visage possible"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 15c1 1.2 2.1 1.8 3.5 1.8s2.5-.6 3.5-1.8"/><path d="M9 9.5h.01M15 9.5h.01"/></svg></span>` : ''}
       </div>
       <div class="stats">
         <div class="stat"><b>${c.proven_video_count || 0}</b><span>vidéos ≥100K</span></div>

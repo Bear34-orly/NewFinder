@@ -123,7 +123,7 @@ def run_for_market(market: str, api_key: str, language: str = "en"):
     from discovery.video_stats import enrich_and_filter, dedupe_by_channel
     from discovery.channel_stats import enrich_with_channel_data
     from discovery.language_filter import filter_and_prioritize_by_language
-    from discovery.faceless_filter import pre_filter_faceless
+    from discovery.faceless_filter import pre_filter_faceless, score_channel_result
     from discovery.channel_activity import validate_channel_activity
     from discovery.database import save_validated_channels
 
@@ -160,7 +160,7 @@ def run_for_market(market: str, api_key: str, language: str = "en"):
     lang_filtered = filter_and_prioritize_by_language(with_channels)
     print(f"=== {len(lang_filtered)} chaînes après filtrage linguistique ===")
 
-    print("\nFiltre faceless (mots-clés, avant analyse coûteuse d'activité)...")
+    print("\nFiltre faceless (texte multilingue, avant analyse coûteuse d'activité)...")
     faceless_candidates = pre_filter_faceless(lang_filtered)
     print(f"=== {len(faceless_candidates)} candidats retenus après filtre faceless ===")
 
@@ -180,11 +180,29 @@ def run_for_market(market: str, api_key: str, language: str = "en"):
             status_display += f" ({result['channel_status']})"
         print(status_display)
         if result["activity_status"] == "VALID":
+            # Score de texte multilingue sur l'ensemble des titres de la chaîne.
+            text_score = score_channel_result(result)
+            if text_score["verdict"] == "face":
+                print(f"    -> rejetée (texte non-faceless : {text_score['hits']}/{text_score['total']} titres, "
+                      f"ex: {text_score['examples'][:1]})")
+                continue
+            if text_score["verdict"] == "doubtful":
+                print(f"    -> douteuse ({text_score['hits']}/{text_score['total']} titres avec signal)")
+            result["face_text_ratio"] = text_score["ratio"]
+            result["face_text_verdict"] = text_score["verdict"]
             result["density_score"] = result["strong_video_count"] / result["total_videos_checked"]
             result["channel_url"] = f"https://www.youtube.com/channel/{result['channel_id']}"
             validated.append(result)
 
     validated.sort(key=lambda v: (v["channel_status"] != "PROVEN", -v["density_score"]))
+
+    # Visages sur les miniatures (tag "Visage ?"). Ignoré sans bloquer si OpenCV n'est pas installé.
+    print("\nAnalyse des visages sur les miniatures...")
+    try:
+        from discovery.face_detect import attach_face_scores
+        attach_face_scores(validated)
+    except ImportError as e:
+        print(f"  (analyse des miniatures ignorée : {e})")
 
     proven_count = sum(1 for v in validated if v["channel_status"] == "PROVEN")
     watchlist_count = len(validated) - proven_count

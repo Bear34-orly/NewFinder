@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 
+from config.face_settings import FACE_TAG_SAME_RATIO
+from config.faceless_signals import DOUBTFUL_RATIO
 from discovery.database import delete_channel, list_all_channels
 from webapp.competition_routes import bp as competition_bp
 
@@ -51,6 +53,18 @@ def _is_new(channel: dict) -> bool:
     return dt >= cutoff
 
 
+def _face_reasons(channel: dict) -> list[str]:
+    """Raisons pour lesquelles une chaîne reçoit le tag 'Visage ?' (liste vide = pas de tag)."""
+    reasons = []
+    same = channel.get("same_face_ratio")
+    text = channel.get("face_text_ratio")
+    if same is not None and same >= FACE_TAG_SAME_RATIO:
+        reasons.append(f"même visage sur {round(same * 100)} % des miniatures")
+    if text is not None and text >= DOUBTFUL_RATIO:
+        reasons.append(f"{round(text * 100)} % des titres ressemblent à une interview ou un format avec visage")
+    return reasons
+
+
 def _get_channels_cached() -> list[dict]:
     """Relit la base seulement si le cache a plus de CACHE_SECONDS secondes."""
     now = time.time()
@@ -58,6 +72,9 @@ def _get_channels_cached() -> list[dict]:
         channels = list_all_channels()
         for c in channels:
             c["is_new"] = _is_new(c)
+            reasons = _face_reasons(c)
+            c["face_flag"] = bool(reasons)
+            c["face_hint"] = " ; ".join(reasons)
         _cache["data"] = channels
         _cache["time"] = now
     return _cache["data"]
