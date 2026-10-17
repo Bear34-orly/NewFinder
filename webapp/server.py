@@ -93,6 +93,7 @@ def index():
 def api_channels():
     search = request.args.get("search", "").strip().lower()
     market = request.args.get("market", "").strip().lower()
+    language = request.args.get("language", "").strip().lower()
     view = request.args.get("view", "new").strip().lower()
     status = request.args.get("status", "all").strip().lower()
 
@@ -106,6 +107,9 @@ def api_channels():
 
     if market and market != "all":
         channels = [c for c in channels if (c.get("market") or "").lower() == market]
+
+    if language and language != "all":
+        channels = [c for c in channels if (c.get("detected_language") or "").lower() == language]
 
     if search:
         channels = [c for c in channels if search in (c.get("channel_title") or "").lower()]
@@ -135,6 +139,13 @@ def api_markets():
     channels = _get_channels_cached()
     markets = sorted({c["market"] for c in channels if c.get("market")})
     return jsonify(markets)
+
+
+@app.route("/api/languages")
+def api_languages():
+    channels = _get_channels_cached()
+    languages = sorted({(c.get("detected_language") or "").lower() for c in channels if c.get("detected_language")})
+    return jsonify(languages)
 
 
 @app.route("/api/stats")

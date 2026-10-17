@@ -354,6 +354,7 @@
     <div class="field-row">
       <input type="search" id="search" placeholder="Rechercher une chaîne...">
       <select id="market"><option value="all">Tous les marchés</option></select>
+      <select id="language"><option value="all">Toutes les langues</option></select>
       <select id="sort">
         <option value="density_score">Trier par densité</option>
         <option value="subscriber_count">Trier par abonnés</option>
@@ -549,6 +550,26 @@ async function loadMarkets() {
   } catch (e) { /* le filtre garde "Tous les marchés" */ }
 }
 
+/* ---------- Langues ---------- */
+const LANGUAGE_NAMES = { en: 'Anglais', es: 'Espagnol', fr: 'Français', de: 'Allemand', ru: 'Russe' };
+async function loadLanguages() {
+  try {
+    const res = await fetch('/api/languages');
+    if (!res.ok) throw new Error();
+    const languages = await res.json();
+    const select = $('language');
+    const current = select.value;
+    select.innerHTML = '<option value="all">Toutes les langues</option>';
+    languages.forEach(l => {
+      const o = document.createElement('option');
+      o.value = l;
+      o.textContent = LANGUAGE_NAMES[l] || l.toUpperCase();
+      select.appendChild(o);
+    });
+    select.value = languages.includes(current) ? current : 'all';
+  } catch (e) { /* le filtre garde "Toutes les langues" */ }
+}
+
 /* ---------- Chaînes ---------- */
 function densityClass(score) { return score >= 0.3 ? 'good' : score >= 0.1 ? 'mid' : 'low'; }
 
@@ -628,6 +649,7 @@ async function loadChannels() {
   const params = new URLSearchParams({
     search: $('search').value,
     market: $('market').value,
+    language: $('language').value,
     view: currentView,
     status: currentStatus,
   });
@@ -788,12 +810,13 @@ $('search').addEventListener('input', () => {
   searchTimer = setTimeout(loadChannels, 250);
 });
 $('market').addEventListener('change', loadChannels);
+$('language').addEventListener('change', loadChannels);
 $('sort').addEventListener('change', loadChannels);
 $('more-btn').addEventListener('click', () => { visibleCount += PAGE_SIZE; renderGrid(); });
 
 initTheme();
 updateSidebar();
-loadMarkets().then(loadChannels);
+loadMarkets().then(loadLanguages).then(loadChannels);
 </script>
 <script src="/static/competition.js?v=1"></script>
 
