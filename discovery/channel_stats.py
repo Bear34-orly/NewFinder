@@ -64,6 +64,7 @@ def get_channel_stats(channel_ids: list[str], api_key: str) -> dict[str, dict]:
                 "channel_thumbnail_url": avatar_url,
                 "channel_banner_url": banner_url,
                 "channel_description": short_description,
+                "channel_created_at": snippet.get("publishedAt"),
             }
 
         time.sleep(0.1)

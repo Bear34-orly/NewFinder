@@ -132,7 +132,7 @@ def run_for_market(market: str, api_key: str, language: str = "en"):
     print(f"{'#' * 60}\n")
 
     seeds = build_queries(market, language)
-    learned = {"queries": [], "active": [], "tests": [], "new": [], "info": None}
+    learned = {"queries": [], "active": [], "tests": [], "new": [], "radar": [], "info": None}
     try:
         from discovery.keyword_engine import plan_learned_queries
         learned = plan_learned_queries(market, language, seeds)
@@ -141,7 +141,8 @@ def run_for_market(market: str, api_key: str, language: str = "en"):
     seed_keys = {s.lower() for s in seeds}
     queries = seeds + [q for q in learned["queries"] if q.lower() not in seed_keys]
     print(f"{len(seeds)} requêtes de départ + {len(queries) - len(seeds)} mot(s)-clé(s) appris pour '{market}'.")
-    for label, items in (("ACTIF", learned["active"]), ("EN TEST", learned["tests"]), ("NOUVEAU", learned["new"])):
+    for label, items in (("ACTIF", learned["active"]), ("EN TEST", learned["tests"]),
+                         ("RADAR", learned.get("radar", [])), ("NOUVEAU", learned["new"])):
         for kw in items:
             print(f"    + [{label}] {kw['query']}")
     if learned["info"] and not learned["info"]["enough_data"]:

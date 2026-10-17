@@ -27,7 +27,7 @@ PHRASE_SIZES = (2, 3)            # expressions de 2 et 3 mots
 MIN_CHANNELS_PER_PHRASE = 3      # une expression doit venir d'au moins 3 chaînes différentes
 MIN_CHANNELS_PER_MIX = 2         # mélange (mot-clé de départ + mot fréquent) : au moins 2 chaînes différentes,
                                  # quand les titres contiennent TOUS les mots du mot-clé de départ
-MIX_ALLOW_PARTIAL_SEED = False    # True : on accepte aussi des titres qui contiennent AU MOINS UN mot du mot-clé
+MIX_ALLOW_PARTIAL_SEED = False   # True : on accepte aussi des titres qui contiennent AU MOINS UN mot du mot-clé
                                  # de départ, mais alors il faut MIN_CHANNELS_PER_PARTIAL_MIX chaînes
 MIN_CHANNELS_PER_PARTIAL_MIX = 3
 NEGATIVE_SHARE_MAX = 0.5         # exclue si au moins 50 % des chaînes qui l'utilisent ont été refusées
@@ -38,6 +38,12 @@ MIN_CORPUS_TITLES = 30           # idem pour le nombre de titres
 # (les mots de ses mots-clés de départ), pour rester dans le sujet du marché.
 # False : toute expression fréquente est acceptée (plus de variété, mais plus de hors-sujet).
 REQUIRE_MARKET_WORD = True
+
+# ---------- Piste "radar" (mots-clés venus du radar) ----------
+
+RADAR_TEST_SLOTS = 2             # places de test réservées aux mots-clés du radar, par marché et par passe
+RADAR_PROMOTE_AFTER_RUNS = 3     # un mot-clé radar reste 3 passes en test ; après, s'il a ramené au moins
+                                 # PROMOTE_MIN_VALIDATED nouvelle chaîne validée, il rejoint les actifs d'habitude
 
 # ---------- Jugement ----------
 

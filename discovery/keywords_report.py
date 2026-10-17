@@ -26,6 +26,12 @@ STATUS_LABEL = {"active": "ACTIF", "test": "EN TEST", "retired": "RETIRÉ", "ban
 STATUS_ORDER = ["active", "test", "retired", "banned"]
 
 
+def _label(row: dict) -> str:
+    if row["status"] == "test" and row.get("source") == "radar":
+        return "RADAR"
+    return STATUS_LABEL.get(row["status"], row["status"])
+
+
 def _print_report(market: str | None, language: str | None):
     rows = list_keywords(market, language)
     if not rows:
@@ -44,7 +50,7 @@ def _print_report(market: str | None, language: str | None):
                                   -(r["validated_found"] or 0)))
         for r in items:
             totals[r["status"]] = totals.get(r["status"], 0) + 1
-            label = STATUS_LABEL.get(r["status"], r["status"])
+            label = _label(r)
             if r["status"] == "banned":
                 print(f"  [{label:<8}] {r['query']}")
             else:

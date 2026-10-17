@@ -153,6 +153,25 @@ def init_db():
                 PRIMARY KEY (market, language, query)
             )
         """)
+
+        # Carte du radar : une ligne par "case" (catégorie + durée + tranche de dates)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS radar_cells (
+                category TEXT NOT NULL,
+                duration TEXT NOT NULL,
+                slice_start TEXT NOT NULL,
+                slice_end TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'open',
+                pages_done INTEGER NOT NULL DEFAULT 0,
+                page_token TEXT,
+                videos_seen INTEGER NOT NULL DEFAULT 0,
+                videos_qualifying INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT,
+                finished_at TEXT,
+                last_run_at TEXT,
+                PRIMARY KEY (category, duration, slice_start, slice_end)
+            )
+        """)
     conn.commit()
     conn.close()
     _initialized = True
@@ -566,8 +585,8 @@ def unban_keyword(market: str, language: str, query: str) -> bool:
 
 
 def record_keyword_run(market: str, language: str, query: str, channels_found: int,
-                       validated_found: int, new_status: str) -> None:
-    """Ajoute les résultats d'une passe à un mot-clé et met à jour son statut."""
+                       validated_found: int, new_status: str, new_source: str | None = None) -> None:
+    """Ajoute les résultats d'une passe à un mot-clé et met à jour son statut (et son origine si demandé)."""
     init_db()
     now = datetime.now(timezone.utc).isoformat()
     with pooled_connection() as conn:
@@ -578,7 +597,117 @@ def record_keyword_run(market: str, language: str, query: str, channels_found: i
                     channels_found = channels_found + %s,
                     validated_found = validated_found + %s,
                     status = %s,
+                    source = COALESCE(%s, source),
                     last_run_at = %s
                 WHERE market = %s AND language = %s AND query = %s
-            """, (channels_found, validated_found, new_status, now, market, language, query))
+            """, (channels_found, validated_found, new_status, new_source, now, market, language, query))
+        conn.commit()
+
+
+def load_radar_corpus(language: str) -> list[dict]:
+    """
+    Titres des vidéos fortes des chaînes trouvées par le radar (channels.query_source = 'radar'),
+    pour une langue. Chaque ligne : {channel_id, market, title, views}.
+    """
+    init_db()
+    with pooled_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT vt.channel_id, c.market AS market, vt.title, vt.views
+                FROM video_titles vt
+                JOIN channels c ON c.channel_id = vt.channel_id
+                WHERE c.query_source = 'radar' AND vt.language = %s AND vt.title IS NOT NULL
+            """, (language,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Radar : carte des cases explorées
+# ---------------------------------------------------------------------------
+
+_CELL_COLS = ("category", "duration", "slice_start", "slice_end", "state", "pages_done", "page_token",
+              "videos_seen", "videos_qualifying", "created_at", "finished_at", "last_run_at")
+
+
+def radar_load_cells() -> list[dict]:
+    init_db()
+    with pooled_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT " + ", ".join(_CELL_COLS) + " FROM radar_cells")
+            return [dict(r) for r in cur.fetchall()]
+
+
+def radar_save_cell(cell: dict) -> None:
+    """Crée ou met à jour une case (clé : category, duration, slice_start, slice_end)."""
+    init_db()
+    now = datetime.now(timezone.utc).isoformat()
+    values = {
+        "category": cell["category"], "duration": cell["duration"],
+        "slice_start": cell["slice_start"], "slice_end": cell["slice_end"],
+        "state": cell.get("state", "open"), "pages_done": cell.get("pages_done", 0),
+        "page_token": cell.get("page_token"), "videos_seen": cell.get("videos_seen", 0),
+        "videos_qualifying": cell.get("videos_qualifying", 0),
+        "created_at": cell.get("created_at") or now, "finished_at": cell.get("finished_at"),
+        "last_run_at": cell.get("last_run_at"),
+    }
+    cols = list(values.keys())
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols
+                        if c not in ("category", "duration", "slice_start", "slice_end", "created_at"))
+    with pooled_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO radar_cells (" + ", ".join(cols) + ") VALUES (" + ", ".join(["%s"] * len(cols)) + ") "
+                "ON CONFLICT (category, duration, slice_start, slice_end) DO UPDATE SET " + updates,
+                [values[c] for c in cols])
+        conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Radar : classement des chaînes dans les marchés
+# ---------------------------------------------------------------------------
+
+def load_market_corpus(language: str) -> list[dict]:
+    """Titres des vidéos fortes des chaînes classées dans un vrai marché par la découverte habituelle (pas par le radar)."""
+    init_db()
+    with pooled_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT c.market AS market, vt.channel_id, vt.title
+                FROM video_titles vt
+                JOIN channels c ON c.channel_id = vt.channel_id
+                WHERE c.market IS NOT NULL AND c.market <> 'radar'
+                  AND COALESCE(c.query_source, '') <> 'radar'
+                  AND vt.language = %s AND vt.title IS NOT NULL
+            """, (language,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def list_unclassified_channels(language: str) -> list[dict]:
+    """Chaînes trouvées par le radar (quel que soit leur marché actuel), avec tous leurs titres connus."""
+    init_db()
+    with pooled_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT channel_id, channel_title, best_video_title, channel_description, market
+                FROM channels WHERE query_source = 'radar' AND detected_language = %s
+            """, (language,))
+            chans = [dict(r) for r in cur.fetchall()]
+            ids = [c["channel_id"] for c in chans]
+            titles = {}
+            if ids:
+                cur.execute("SELECT channel_id, title FROM video_titles WHERE channel_id = ANY(%s)", (ids,))
+                for r in cur.fetchall():
+                    titles.setdefault(r["channel_id"], []).append(r["title"])
+    for c in chans:
+        c["titles"] = titles.get(c["channel_id"], [])
+    return chans
+
+
+def set_channel_market(channel_id: str, market: str) -> None:
+    """Déplace une chaîne (et ses titres de vidéos) vers un autre marché."""
+    init_db()
+    with pooled_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE channels SET market = %s WHERE channel_id = %s", (market, channel_id))
+            cur.execute("UPDATE video_titles SET market = %s WHERE channel_id = %s", (market, channel_id))
         conn.commit()

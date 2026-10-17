@@ -112,8 +112,10 @@ def get_video_stats_batch(video_ids: list[str], api_key: str) -> list[dict]:
         data = resp.json()
         for item in data.get("items", []):
             views = int(item.get("statistics", {}).get("viewCount", 0))
-            title = item.get("snippet", {}).get("title", "")
-            all_stats.append({"video_id": item["id"], "view_count": views, "title": title})
+            snippet = item.get("snippet", {})
+            title = snippet.get("title", "")
+            all_stats.append({"video_id": item["id"], "view_count": views, "title": title,
+                              "published_at": snippet.get("publishedAt")})
         time.sleep(0.1)
 
     return all_stats
@@ -138,7 +140,12 @@ def classify_videos(video_stats: list[dict], subscriber_count: int | None,
     return {"strong": strong, "proven": proven}
 
 
-def validate_channel_activity(channel: dict, api_key: str) -> dict:
+def validate_channel_activity(channel: dict, api_key: str, strong_max_age_days: int | None = None,
+                              strong_min_views: int = PROVEN_VIEWS_THRESHOLD) -> dict:
+    """
+    strong_max_age_days (radar seulement) : si renseigné, la chaîne est rejetée dès qu'elle a une
+    vidéo d'au moins strong_min_views vues publiée il y a plus de strong_max_age_days jours.
+    """
     uploads_playlist_id = channel.get("uploads_playlist_id")
     if not uploads_playlist_id:
         return {**channel, "activity_status": "NO_PLAYLIST"}
@@ -153,6 +160,14 @@ def validate_channel_activity(channel: dict, api_key: str) -> dict:
         return {**channel, "activity_status": check["status"]}
 
     video_stats = get_video_stats_batch(check["video_ids"], api_key)
+
+    if strong_max_age_days is not None:
+        limit = datetime.now(timezone.utc) - timedelta(days=strong_max_age_days)
+        for v in video_stats:
+            published = v.get("published_at")
+            if published and v["view_count"] >= strong_min_views and _parse_date(published) < limit:
+                return {**channel, "activity_status": "REJECTED_OLD_STRONG_VIDEO"}
+
     classified = classify_videos(video_stats, channel.get("subscriber_count"))
 
     strong_videos = classified["strong"]

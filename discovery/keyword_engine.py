@@ -1,11 +1,14 @@
 """
 Étape 4 — Moteur de mots-clés.
 
-Il lit les titres des vidéos fortes déjà trouvées et propose deux sortes de nouvelles recherches :
-  - des expressions collées de 2-3 mots qui reviennent chez plusieurs chaînes ;
-  - des mélanges : un mot-clé de départ + un mot fréquent qui apparaît avec lui dans les titres.
-Celles qui ramènent de NOUVELLES chaînes validées sont gardées ("actif"), les autres
-sont abandonnées ("retiré").
+Il lit les titres des vidéos fortes déjà trouvées, repère les expressions de
+2-3 mots qui reviennent chez plusieurs chaînes, et les teste comme nouvelles
+recherches. Celles qui ramènent de NOUVELLES chaînes validées sont gardées
+("actif"), les autres sont abandonnées ("retiré").
+
+Piste "radar" : les mots-clés tirés des chaînes trouvées par le radar (source = 'radar') ont leurs
+propres places de test. Ils restent RADAR_PROMOTE_AFTER_RUNS passes en test ; ensuite, ceux qui ont
+ramené au moins une nouvelle chaîne validée rejoignent les actifs d'habitude, les autres sont retirés.
 
 Cycle de vie d'un mot-clé (table keywords, colonne status) :
     test    -> en essai (relancé à chaque passe, jusqu'à RETIRE_AFTER_RUNS passes)
@@ -26,7 +29,8 @@ from config.keyword_settings import (
     GENERIC_WORDS, MAX_ACTIVE_PER_MARKET, MIN_CHANNELS_PER_MIX, MIN_CHANNELS_PER_PARTIAL_MIX,
     MIN_CHANNELS_PER_PHRASE, MIN_CORPUS_CHANNELS, MIX_ALLOW_PARTIAL_SEED,
     MIN_CORPUS_TITLES, MIN_SEED_SHARE, NEGATIVE_SHARE_MAX, NEW_TESTS_PER_PASS, PHRASE_SIZES,
-    PROMOTE_MIN_VALIDATED, REQUIRE_MARKET_WORD, RETIRE_AFTER_RUNS, STOPWORDS, TEST_QUOTA_SHARE,
+    PROMOTE_MIN_VALIDATED, RADAR_PROMOTE_AFTER_RUNS, RADAR_TEST_SLOTS, REQUIRE_MARKET_WORD,
+    RETIRE_AFTER_RUNS, STOPWORDS, TEST_QUOTA_SHARE,
 )
 
 SUPPORTED_LANGUAGES = tuple(STOPWORDS.keys())
@@ -406,14 +410,16 @@ def slot_budget(n_seed: int) -> dict:
     """
     Nombre de places pour les mots-clés appris, selon le nombre de seeds du marché.
       test_slots   : recherches de test (plafond TEST_QUOTA_SHARE du total, 1 minimum, NEW_TESTS_PER_PASS maximum)
+      radar_slots  : places réservées aux mots-clés venus du radar (RADAR_TEST_SLOTS)
       active_slots : mots-clés actifs relancés (les seeds restent au moins MIN_SEED_SHARE du total)
     """
     share = TEST_QUOTA_SHARE
     test_slots = int(n_seed * share / (1 - share))
     test_slots = max(1, min(NEW_TESTS_PER_PASS, test_slots))
     max_learned = int(n_seed * (1 - MIN_SEED_SHARE) / MIN_SEED_SHARE)
-    active_slots = max(0, min(MAX_ACTIVE_PER_MARKET, max_learned - test_slots))
-    return {"test_slots": test_slots, "active_slots": active_slots}
+    radar_slots = RADAR_TEST_SLOTS
+    active_slots = max(0, min(MAX_ACTIVE_PER_MARKET, max_learned - test_slots - radar_slots))
+    return {"test_slots": test_slots, "active_slots": active_slots, "radar_slots": radar_slots}
 
 
 def _yield_of(row: dict) -> float:
@@ -429,7 +435,7 @@ def plan_learned_queries(market: str, language: str, seeds: list[str]) -> dict:
     """
     from discovery.database import add_keyword, list_keywords, load_keyword_corpus
 
-    result = {"queries": [], "active": [], "tests": [], "new": [], "info": None}
+    result = {"queries": [], "active": [], "tests": [], "new": [], "radar": [], "info": None}
     if language not in SUPPORTED_LANGUAGES:
         return result
 
@@ -441,10 +447,14 @@ def plan_learned_queries(market: str, language: str, seeds: list[str]) -> dict:
     actives.sort(key=lambda r: (-_yield_of(r), r.get("last_run_at") or ""))
     actives = actives[:budget["active_slots"]]
 
-    # Mots-clés en essai : les plus anciens d'abord
-    in_test = [r for r in rows if r["status"] == "test"]
+    # Mots-clés en essai : les plus anciens d'abord (le radar a sa propre piste)
+    in_test = [r for r in rows if r["status"] == "test" and r.get("source") != "radar"]
     in_test.sort(key=lambda r: r.get("created_at") or "")
     in_test = in_test[:budget["test_slots"]]
+
+    radar_tests = [r for r in rows if r["status"] == "test" and r.get("source") == "radar"]
+    radar_tests.sort(key=lambda r: r.get("created_at") or "")
+    radar_tests = radar_tests[:budget["radar_slots"]]
 
     free = budget["test_slots"] - len(in_test)
     new_count = min(NEW_TESTS_PER_PASS, free)
@@ -466,9 +476,10 @@ def plan_learned_queries(market: str, language: str, seeds: list[str]) -> dict:
 
     result["active"] = actives
     result["tests"] = in_test
+    result["radar"] = radar_tests
     result["new"] = new_rows
     seen = set()
-    for r in actives + in_test + new_rows:
+    for r in actives + in_test + radar_tests + new_rows:
         q = r["query"]
         if q not in seen:
             seen.add(q)
@@ -485,8 +496,13 @@ def _sources(channel: dict) -> set:
     return {s.strip().lower() for s in (channel.get("query_source") or "").split(", ") if s.strip()}
 
 
-def decide_status(status: str, times_run: int, validated_total: int) -> str:
+def decide_status(status: str, times_run: int, validated_total: int, source: str = "learned") -> str:
     """Nouveau statut d'un mot-clé après une passe (times_run et validated_total incluent cette passe)."""
+    if status == "test" and source == "radar":
+        # Piste radar : rien ne change avant la fin des RADAR_PROMOTE_AFTER_RUNS passes.
+        if times_run >= RADAR_PROMOTE_AFTER_RUNS:
+            return "active" if validated_total >= PROMOTE_MIN_VALIDATED else "retired"
+        return status
     if status == "test":
         if validated_total >= PROMOTE_MIN_VALIDATED:
             return "active"
@@ -511,7 +527,7 @@ def record_pass_results(market: str, language: str, plan: dict, seeds: list[str]
 
     seed_set = {s.strip().lower() for s in seeds}
     summary = []
-    for kw in plan["active"] + plan["tests"] + plan["new"]:
+    for kw in plan["active"] + plan["tests"] + plan.get("radar", []) + plan["new"]:
         q = kw["query"].lower()
         found = [c for c in candidates if q in _sources(c)]
         fresh = [v for v in validated
@@ -519,8 +535,90 @@ def record_pass_results(market: str, language: str, plan: dict, seeds: list[str]
         times_run = (kw.get("times_run") or 0) + 1
         validated_total = (kw.get("validated_found") or 0) + len(fresh)
         old_status = kw["status"]
-        new_status = decide_status(old_status, times_run, validated_total)
-        record_keyword_run(market, language, kw["query"], len(found), len(fresh), new_status)
+        old_source = kw.get("source") or "learned"
+        new_status = decide_status(old_status, times_run, validated_total, old_source)
+        # Un mot-clé radar qui réussit rejoint les mots-clés d'habitude (source 'learned').
+        new_source = "learned" if (old_source == "radar" and old_status == "test" and new_status == "active") else None
+        record_keyword_run(market, language, kw["query"], len(found), len(fresh), new_status, new_source)
         summary.append({"query": kw["query"], "found": len(found), "fresh": len(fresh),
-                        "old_status": old_status, "new_status": new_status, "times_run": times_run})
+                        "old_status": old_status, "new_status": new_status, "times_run": times_run,
+                        "source": old_source})
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Piste radar : création des mots-clés à partir des chaînes trouvées par le radar
+# ---------------------------------------------------------------------------
+
+def create_radar_keywords(language: str = "en") -> list[dict]:
+    """
+    Cherche, dans les titres des chaînes trouvées par le radar, des expressions qui reviennent chez
+    au moins RADAR_MIN_CHANNELS chaînes radar différentes, et les met en test (source 'radar')
+    dans le marché de la majorité de ces chaînes, dans la limite des places radar libres.
+    Retourne la liste des mots-clés créés : [{"market", "query", "channels"}].
+    """
+    from collections import Counter
+
+    from config.markets import MARKETS
+    from config.queries import build_queries
+    from config.radar_settings import RADAR_MIN_CHANNELS, RADAR_REQUIRE_MARKET_WORD, UNCLASSIFIED_MARKET
+    from discovery.database import add_keyword, list_keywords, load_keyword_corpus, load_radar_corpus
+
+    if language not in SUPPORTED_LANGUAGES:
+        return []
+    rows = load_radar_corpus(language)
+    if not rows:
+        return []
+
+    stats = count_phrases(rows, language)
+    chan_market = {r["channel_id"]: r["market"] for r in rows}
+
+    per_market = {}
+    for ph, st in stats.items():
+        if len(st["channels"]) < RADAR_MIN_CHANNELS:
+            continue
+        counts = Counter(chan_market.get(c) for c in sorted(st["channels"], key=str)
+                         if chan_market.get(c) not in (None, UNCLASSIFIED_MARKET))
+        if not counts:
+            continue
+        market = counts.most_common(1)[0][0]
+        per_market.setdefault(market, []).append({
+            "words": ph, "phrase": " ".join(ph), "channels": len(st["channels"]),
+            "views": st["views"], "titles": st["titles"], "example": st["example"]})
+
+    created = []
+    for market in sorted(per_market):
+        if market not in MARKETS:
+            continue
+        existing = list_keywords(market, language)
+        busy = sum(1 for r in existing if r["status"] == "test" and r.get("source") == "radar")
+        free = RADAR_TEST_SLOTS - busy
+        if free <= 0:
+            continue
+
+        seeds = build_queries(market, language)
+        learned = [phrase_words(r["query"], language) for r in existing]
+        known = [phrase_words(sd, language) for sd in seeds] + learned
+        banned = [phrase_words(r["query"], language) for r in existing if r["status"] == "banned"]
+        _, negatives = load_keyword_corpus(market, language)
+        neg = count_phrases(negatives, language) if negatives else {}
+        vocab = market_vocabulary(market, language, seeds)
+
+        cands = []
+        for c in per_market[market]:
+            neg_n = len(neg[c["words"]]["channels"]) if c["words"] in neg else 0
+            if neg_n and neg_n / (neg_n + c["channels"]) >= NEGATIVE_SHARE_MAX:
+                continue
+            if any(_contains(c["words"], b) for b in banned if b):
+                continue
+            if _overlaps(c["words"], known):
+                continue
+            if RADAR_REQUIRE_MARKET_WORD and not any(w in vocab for w in c["words"]):
+                continue
+            cands.append(c)
+        cands.sort(key=lambda c: (-c["channels"], -c["views"], c["phrase"]))
+
+        for c in pick_non_overlapping(cands, free, known, language):
+            if add_keyword(market, language, c["phrase"], status="test", source="radar"):
+                created.append({"market": market, "query": c["phrase"], "channels": c["channels"]})
+    return created
