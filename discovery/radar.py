@@ -20,6 +20,7 @@ Usage :
     python -m discovery.radar --dry-run        (montre le plan sans rien appeler ni enregistrer)
     python -m discovery.radar --status         (état de la carte : cases terminées, ouvertes...)
     python -m discovery.radar --reclassify     (range les chaînes restées dans 'radar' dans un vrai marché)
+    python -m discovery.radar --reclassify-all (revoit aussi les chaînes déjà rangées)
 """
 
 import argparse
@@ -703,17 +704,24 @@ def run(budget_units: int | None = None, dry_run: bool = False) -> None:
             mod.youtube_get = orig
 
 
-def reclassify() -> None:
+def reclassify(review_all: bool = False) -> None:
     """
-    Reprend les chaînes restées dans le marché 'radar' et les range dans un vrai marché quand le
-    vocabulaire (de départ + appris) le permet. Ne supprime rien : les chaînes musique / enfants
-    sont seulement listées pour que tu les supprimes toi-même sur le site.
+    Range dans un vrai marché les chaînes restées dans le marché 'radar', quand le vocabulaire
+    (de départ + appris) le permet. Ne déplace JAMAIS une chaîne qui a déjà un vrai marché
+    (celui-ci peut venir de l'indice de catégorie, que ce calcul n'a plus).
+    review_all=True (--reclassify-all) : revoit aussi les chaînes déjà rangées, et peut les remettre
+    dans 'radar'. Ne supprime rien : les chaînes musique / enfants sont seulement listées pour que tu
+    les supprimes toi-même sur le site.
     """
     from discovery.database import list_unclassified_channels, set_channel_market
 
     vocabs, _ = build_market_vocabularies()
     chans = list_unclassified_channels(cfg.LANGUAGE)
-    print(f"{len(chans)} chaîne(s) trouvée(s) par le radar (toutes revues, même celles déjà déplacées).")
+    if not review_all:
+        chans = [c for c in chans if c["market"] == cfg.UNCLASSIFIED_MARKET]
+        print(f"{len(chans)} chaîne(s) restée(s) dans le marché 'radar'.")
+    else:
+        print(f"{len(chans)} chaîne(s) trouvée(s) par le radar (toutes revues, même celles déjà rangées).")
     moved = 0
     final = Counter()
     off_target = []
@@ -786,12 +794,14 @@ if __name__ == "__main__":
     parser.add_argument("--status", action="store_true", help="montre l'état de la carte")
     parser.add_argument("--reclassify", action="store_true",
                         help="range dans un vrai marché les chaînes restées dans 'radar' (sans appeler YouTube)")
+    parser.add_argument("--reclassify-all", action="store_true",
+                        help="revoit TOUTES les chaînes du radar, même celles déjà rangées (peut les remettre dans 'radar')")
     args = parser.parse_args()
 
     if args.status:
         print_status()
-    elif args.reclassify:
-        reclassify()
+    elif args.reclassify or args.reclassify_all:
+        reclassify(review_all=args.reclassify_all)
     else:
         if not args.dry_run and not has_keys():
             raise SystemExit("Aucune clé API trouvée : renseigne YOUTUBE_API_KEYS (ou YOUTUBE_API_KEY) dans .env.")

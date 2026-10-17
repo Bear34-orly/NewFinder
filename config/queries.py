@@ -1,11 +1,12 @@
 """
 Construit la liste des requêtes de recherche d'un marché dans une langue.
 
-- Anglais : les sujets de config/markets.py + quelques sujets de la réserve
-  (config/extra_topics.py, en rotation chaque semaine) + les 4 premiers sujets
-  combinés avec 3 formules de titre. Les doublons sont retirés.
-- Autres langues (es, fr, de, ru) : 4 sujets traduits par marché
-  (config/translations.py) + quelques sujets traduits de la réserve.
+- Anglais : les sujets de config/markets.py + les 4 premiers sujets combinés
+  avec 3 formules de titre. Les formules tournent chaque semaine, pour que
+  toutes finissent par être utilisées. Les doublons sont retirés.
+- Autres langues (es, fr, de, ru) : tous les sujets traduits du marché (config/translations.py et
+  config/translations_more.py) + une partie de la réserve, et, comme en anglais, les 4 premiers sujets
+  combinés avec 3 formules de titre traduites (désactivable : USE_FORMULAS_OTHER_LANGUAGES).
 """
 
 from datetime import date
@@ -13,10 +14,12 @@ from datetime import date
 from config.markets import MARKETS
 from config.translations import TRANSLATED_TOPICS
 from config.extra_topics import EXTRA_PER_RUN, EXTRA_TOPICS, EXTRA_TRANSLATED
+from config.translations_more import FORMULAS
 
 LANGUAGES = ["en", "es", "fr", "de", "ru"]
 OTHER_LANGUAGES = ["es", "fr", "de", "ru"]
 FORMULAS_PER_RUN = 3
+USE_FORMULAS_OTHER_LANGUAGES = True   # False : les autres langues n'utilisent plus les formules de titre (moins de requêtes)
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -67,4 +70,12 @@ def build_queries(market: str, language: str = "en", week: int | None = None) ->
 
     translated = TRANSLATED_TOPICS.get(market, {}).get(language, [])
     extras = _rotated_extras(EXTRA_TRANSLATED.get(market, {}).get(language, []), week)
-    return _dedupe(list(translated) + extras)
+    queries = list(translated) + extras
+    if USE_FORMULAS_OTHER_LANGUAGES:
+        formulas = _rotated_formulas(MARKETS[market]["title_formulas"], week)
+        for topic in translated[:4]:
+            for formula in formulas:
+                translated_formula = FORMULAS.get(formula, {}).get(language)
+                if translated_formula:
+                    queries.append(f"{topic} {translated_formula}")
+    return _dedupe(queries)

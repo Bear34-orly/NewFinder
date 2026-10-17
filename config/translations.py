@@ -154,3 +154,18 @@ TRANSLATED_TOPICS = {
         "ru": ["документальный фильм роскошная жизнь", "история люксовых брендов", "дорогие вещи", "секреты индустрии роскоши"],
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Suite : les sujets anglais au-delà du 4e, traduits dans config/translations_more.py.
+# On les ajoute ici pour que tout le reste du code (requêtes, vocabulaire des marchés)
+# les voie comme les autres sujets traduits.
+# ---------------------------------------------------------------------------
+from config.translations_more import MORE_TOPICS  # noqa: E402
+
+for _market, _by_lang in MORE_TOPICS.items():
+    for _lang, _topics in _by_lang.items():
+        _current = TRANSLATED_TOPICS.setdefault(_market, {}).setdefault(_lang, [])
+        for _t in _topics:
+            if _t not in _current:
+                _current.append(_t)
