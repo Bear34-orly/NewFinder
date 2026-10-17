@@ -1,0 +1,146 @@
+# Robot quotidien du Niche Finder (GitHub Actions)
+#
+# Chaque jour, vers 14h00 (heure de l'Inde), une fois les clés YouTube remises à zéro :
+#   1. le radar (vidéos fortes sans mot-clé)
+#   2. le rangement des chaînes du radar dans les marchés (--reclassify)
+#   3. la découverte de la langue du jour, sur tous les marchés (en, es, fr, de, ru à tour de rôle)
+#   4. le refresh des compteurs de chaînes, tous les 3 jours
+# Les mots-clés (radar et appris) sont créés automatiquement pendant les étapes 1 et 3.
+#
+# Secrets à créer dans GitHub (Settings > Secrets and variables > Actions) :
+#   DATABASE_URL        adresse de la base Supabase (utilise l'adresse "pooler")
+#   YOUTUBE_API_KEYS    les 20 clés séparées par des virgules
+
+name: Découverte quotidienne
+
+on:
+  schedule:
+    - cron: "30 8 * * *"        # 08:30 UTC = 14:00 en Inde (les clés sont remises à zéro vers 12:30-13:30)
+  workflow_dispatch:            # lancement à la main depuis l'onglet Actions (pour tester)
+    inputs:
+      language:
+        description: "Langue de la découverte (auto = langue du jour)"
+        type: choice
+        default: auto
+        options: [auto, en, es, fr, de, ru, aucune]
+      markets:
+        description: "Marchés de la découverte (all = tous ; ex : history finance pour tester)"
+        type: string
+        default: all
+      radar_budget:
+        description: "Budget de recherche du radar, en unités (0 = pas de radar)"
+        type: string
+        default: "15000"
+      refresh:
+        description: "Refresh des compteurs"
+        type: choice
+        default: auto
+        options: [auto, oui, non]
+
+# Un seul lancement à la fois : si un lancement est encore en cours, le suivant attend.
+concurrency:
+  group: niche-finder-quotidien
+  cancel-in-progress: false
+
+jobs:
+  quotidien:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345        # GitHub coupe à 6 h ; chaque marché est enregistré dès qu'il est fini
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      YOUTUBE_API_KEYS: ${{ secrets.YOUTUBE_API_KEYS }}
+      PYTHONUNBUFFERED: "1"
+      PYTHONIOENCODING: "utf-8"
+
+    steps:
+      - name: Télécharger le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-discovery.txt
+
+      - name: Installer les paquets
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements-discovery.txt
+          pip install psycopg2-binary python-dotenv langdetect requests
+
+      - name: Vérifier les secrets
+        run: |
+          [ -n "$DATABASE_URL" ] || { echo "Secret DATABASE_URL manquant"; exit 1; }
+          [ -n "$YOUTUBE_API_KEYS" ] || { echo "Secret YOUTUBE_API_KEYS manquant"; exit 1; }
+
+      # Les modèles de visages (38 Mo) ne sont pas dans git : le code les télécharge tout seul
+      # la première fois. Ce cache évite de les retélécharger chaque jour.
+      - name: Garder les modèles de visages en mémoire
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: modeles-visages-v1
+
+      - name: Choisir la langue du jour et le rythme
+        run: |
+          DAY=$(( $(date -u +%s) / 86400 ))
+          LANGS=(en es fr de ru)
+          AUTO_LANG=${LANGS[$(( DAY % 5 ))]}
+          CHOSEN="${{ inputs.language }}"
+          if [ -z "$CHOSEN" ] || [ "$CHOSEN" = "auto" ]; then CHOSEN="$AUTO_LANG"; fi
+          echo "LANGUE_DU_JOUR=$CHOSEN" >> "$GITHUB_ENV"
+
+          REFRESH="${{ inputs.refresh }}"
+          if [ -z "$REFRESH" ] || [ "$REFRESH" = "auto" ]; then
+            if [ $(( DAY % 3 )) -eq 0 ]; then REFRESH=oui; else REFRESH=non; fi
+          fi
+          echo "FAIRE_REFRESH=$REFRESH" >> "$GITHUB_ENV"
+          echo "Langue du jour : $CHOSEN | refresh : $REFRESH"
+
+      - name: Radar
+        id: radar
+        continue-on-error: true
+        run: |
+          BUDGET="${{ inputs.radar_budget }}"
+          if [ -z "$BUDGET" ]; then BUDGET=15000; fi
+          if [ "$BUDGET" = "0" ]; then echo "Radar désactivé pour ce lancement."; exit 0; fi
+          python -m discovery.radar --budget "$BUDGET"
+
+      - name: Ranger les chaînes du radar dans les marchés
+        id: reclass
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python -m discovery.radar --reclassify
+
+      - name: Découverte de la langue du jour
+        id: decouverte
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          if [ "$LANGUE_DU_JOUR" = "aucune" ]; then echo "Pas de découverte pour ce lancement."; exit 0; fi
+          MARKETS="${{ inputs.markets }}"
+          if [ -z "$MARKETS" ]; then MARKETS=all; fi
+          python -m discovery.search $MARKETS --lang "$LANGUE_DU_JOUR"
+
+      - name: Refresh des compteurs de chaînes
+        id: refresh
+        if: ${{ !cancelled() && env.FAIRE_REFRESH == 'oui' }}
+        continue-on-error: true
+        run: python -m discovery.refresh all
+
+      - name: État de la carte du radar
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python -m discovery.radar --status
+
+      - name: Conclure (échec si une étape a échoué)
+        if: ${{ !cancelled() }}
+        run: |
+          FAIL=0
+          for etape in "radar=${{ steps.radar.outcome }}" "reclassement=${{ steps.reclass.outcome }}" \
+                       "découverte=${{ steps.decouverte.outcome }}" "refresh=${{ steps.refresh.outcome }}"; do
+            if [ "${etape#*=}" = "failure" ]; then echo "Étape en échec : ${etape%%=*}"; FAIL=1; fi
+          done
+          exit $FAIL
