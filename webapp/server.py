@@ -4,16 +4,23 @@ filtre par marché, temps (nouveau/tout), statut (proven/watchlist) et
 statistiques par marché. Contient aussi la page Concurrence (voir
 webapp/competition_routes.py).
 
+Le site est PRIVÉ : tout est protégé par un mot de passe (variable SITE_PASSWORD).
+Sans cette variable, le site refuse tout accès (il ne s'ouvre jamais par erreur).
+
 Lancer avec: python -m webapp.server
 Puis ouvrir: http://localhost:5000
 """
 
+import hashlib
+import hmac
 import os
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import (Flask, Response, jsonify, redirect, render_template,
+                   render_template_string, request, session, url_for)
 
 from config.face_settings import FACE_TAG_SAME_RATIO
 from config.faceless_signals import DOUBTFUL_RATIO
@@ -26,6 +33,50 @@ app = Flask(__name__)
 app.register_blueprint(competition_bp)
 
 ADMIN_KEY = os.environ.get("ADMIN_KEY")
+
+# ---------- Accès privé (mot de passe unique) ----------
+SITE_PASSWORD = os.environ.get("SITE_PASSWORD")
+
+# Clé qui signe le cookie de connexion. Elle dépend du mot de passe : si tu le changes,
+# toutes les connexions existantes sont coupées.
+if SITE_PASSWORD:
+    app.secret_key = hashlib.sha256(("niche-finder-session:" + SITE_PASSWORD).encode()).hexdigest()
+else:
+    app.secret_key = secrets.token_hex(32)
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),  # Render est en https ; en local (http) on désactive
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
+
+PUBLIC_ENDPOINTS = {"login", "logout", "health", "robots"}
+MAX_LOGIN_FAILURES = 8          # essais ratés autorisés ...
+LOGIN_WINDOW_SECONDS = 600      # ... pendant 10 minutes
+_login_failures: list[float] = []
+
+LOGIN_PAGE = """<!doctype html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Connexion</title>
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#111; color:#eee; font-family:system-ui,-apple-system,Segoe UI,sans-serif; }
+  form { width:min(340px, 88vw); padding:28px; border:1px solid #2a2a2a; border-radius:14px; background:#181818; }
+  h1 { font-size:18px; margin:0 0 16px; }
+  input, button { width:100%; box-sizing:border-box; padding:11px 12px; border-radius:8px; font-size:15px; }
+  input { border:1px solid #333; background:#111; color:#eee; margin-bottom:12px; }
+  button { border:0; background:#22c55e; color:#04130a; font-weight:600; cursor:pointer; }
+  .err { color:#f87171; font-size:14px; margin:0 0 12px; }
+</style></head><body>
+<form method="post" action="/login">
+  <h1>Accès privé</h1>
+  {% if error %}<p class="err">{{ error }}</p>{% endif %}
+  <input type="password" name="password" placeholder="Mot de passe" autocomplete="current-password" autofocus required>
+  <button type="submit">Entrer</button>
+</form></body></html>"""
 
 NEW_CHANNEL_WINDOW_DAYS = 30
 CACHE_SECONDS = 20
@@ -82,6 +133,85 @@ def _get_channels_cached() -> list[dict]:
 
 def _invalidate_cache():
     _cache["data"] = None
+
+
+def _login_locked() -> int:
+    """Retourne le nombre de secondes d'attente si trop d'essais ratés, sinon 0."""
+    now = time.time()
+    _login_failures[:] = [t for t in _login_failures if now - t < LOGIN_WINDOW_SECONDS]
+    if len(_login_failures) >= MAX_LOGIN_FAILURES:
+        return int(LOGIN_WINDOW_SECONDS - (now - _login_failures[0])) + 1
+    return 0
+
+
+@app.before_request
+def require_login():
+    """Tout est fermé sauf la page de connexion, /health et robots.txt."""
+    if request.endpoint in PUBLIC_ENDPOINTS:
+        return None
+    if not SITE_PASSWORD:
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Site verrouillé : SITE_PASSWORD n'est pas configuré"}), 503
+        return Response("Site verrouillé : la variable SITE_PASSWORD n'est pas configurée sur le serveur.",
+                        status=503, mimetype="text/plain")
+    if session.get("auth") is True:
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Non connecté"}), 401
+    return redirect(url_for("login"))
+
+
+@app.after_request
+def add_privacy_headers(response):
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if request.path.startswith("/api/") or request.endpoint in ("index", "login"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not SITE_PASSWORD:
+        return Response("Site verrouillé : la variable SITE_PASSWORD n'est pas configurée sur le serveur.",
+                        status=503, mimetype="text/plain")
+    if request.method == "POST":
+        wait = _login_locked()
+        if wait:
+            minutes = max(1, wait // 60)
+            return render_template_string(LOGIN_PAGE, error=f"Trop d'essais. Réessaie dans {minutes} min."), 429
+        given = request.form.get("password", "")
+        if hmac.compare_digest(given.encode("utf-8"), SITE_PASSWORD.encode("utf-8")):
+            _login_failures.clear()
+            session.clear()
+            session["auth"] = True
+            session.permanent = True
+            return redirect(url_for("index"))
+        _login_failures.append(time.time())
+        time.sleep(1)  # ralentit les essais automatiques
+        return render_template_string(LOGIN_PAGE, error="Mot de passe incorrect."), 401
+    if session.get("auth") is True:
+        return redirect(url_for("index"))
+    return render_template_string(LOGIN_PAGE, error=None)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/health")
+def health():
+    """Réponse minimale pour que Render vérifie que le site tourne (aucune donnée)."""
+    return Response("ok", mimetype="text/plain")
+
+
+@app.route("/robots.txt")
+def robots():
+    return Response("User-agent: *\nDisallow: /\n", mimetype="text/plain")
 
 
 @app.route("/")
