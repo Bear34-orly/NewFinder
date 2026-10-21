@@ -4,7 +4,7 @@ filtre par marché, temps (nouveau/tout), statut (proven/watchlist) et
 statistiques par marché. Contient aussi la page Concurrence (voir
 webapp/competition_routes.py).
 
-Le site est PRIVÉ : tout est protégé par un mot de passe (variable SITE_PASSWORD).
+Le site est protégé par un mot de passe SI la variable SITE_PASSWORD existe ; sans elle, le site est OUVERT à tous.
 Sans cette variable, le site refuse tout accès (il ne s'ouvre jamais par erreur).
 
 Lancer avec: python -m webapp.server
@@ -150,10 +150,7 @@ def require_login():
     if request.endpoint in PUBLIC_ENDPOINTS:
         return None
     if not SITE_PASSWORD:
-        if request.path.startswith("/api/"):
-            return jsonify({"error": "Site verrouillé : SITE_PASSWORD n'est pas configuré"}), 503
-        return Response("Site verrouillé : la variable SITE_PASSWORD n'est pas configurée sur le serveur.",
-                        status=503, mimetype="text/plain")
+        return None          # pas de mot de passe configuré : le site est OUVERT à tous (choix assumé)
     if session.get("auth") is True:
         return None
     if request.path.startswith("/api/"):
@@ -175,8 +172,7 @@ def add_privacy_headers(response):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if not SITE_PASSWORD:
-        return Response("Site verrouillé : la variable SITE_PASSWORD n'est pas configurée sur le serveur.",
-                        status=503, mimetype="text/plain")
+        return redirect(url_for("index"))      # site ouvert : pas de page de connexion
     if request.method == "POST":
         wait = _login_locked()
         if wait:
