@@ -130,6 +130,12 @@ jobs:
         continue-on-error: true
         run: python -m discovery.refresh all
 
+      - name: Photo du jour des chaînes (historique)
+        id: historique
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python -m discovery.history
+
       - name: État de la carte du radar
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -140,7 +146,8 @@ jobs:
         run: |
           FAIL=0
           for etape in "radar=${{ steps.radar.outcome }}" "reclassement=${{ steps.reclass.outcome }}" \
-                       "découverte=${{ steps.decouverte.outcome }}" "refresh=${{ steps.refresh.outcome }}"; do
+                       "découverte=${{ steps.decouverte.outcome }}" "refresh=${{ steps.refresh.outcome }}" \
+                       "historique=${{ steps.historique.outcome }}"; do
             if [ "${etape#*=}" = "failure" ]; then echo "Étape en échec : ${etape%%=*}"; FAIL=1; fi
           done
           exit $FAIL

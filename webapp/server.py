@@ -24,7 +24,7 @@ from flask import (Flask, Response, jsonify, redirect, render_template,
 
 from config.face_settings import FACE_TAG_SAME_RATIO
 from config.faceless_signals import DOUBTFUL_RATIO
-from discovery.database import delete_channel, list_all_channels
+from discovery.database import delete_channel, list_all_channels, load_growth
 from webapp.competition_routes import bp as competition_bp
 
 load_dotenv()
@@ -121,7 +121,18 @@ def _get_channels_cached() -> list[dict]:
     now = time.time()
     if _cache["data"] is None or now - _cache["time"] > CACHE_SECONDS:
         channels = list_all_channels()
+        try:
+            growth = load_growth(7)
+        except Exception as e:           # l'historique ne doit jamais casser le site
+            print(f"Croissance indisponible : {e}")
+            growth = {}
         for c in channels:
+            g = growth.get(c["channel_id"]) or {}
+            c["subs_gain"] = g.get("subs_gain")
+            c["gain_days"] = g.get("gain_days")
+            c["subs_gain_week"] = g.get("subs_gain_week")
+            c["growth_pct_week"] = g.get("growth_pct_week")
+            c["views_gain_week"] = g.get("views_gain_week")
             c["is_new"] = _is_new(c)
             reasons = _face_reasons(c)
             c["face_flag"] = bool(reasons)

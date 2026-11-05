@@ -360,6 +360,8 @@
         <option value="subscriber_count">Trier par abonnés</option>
         <option value="proven_video_count">Trier par vidéos ≥100K</option>
         <option value="first_discovered_at">Trier par date de découverte</option>
+        <option value="subs_gain_week">Trier par abonnés gagnés / semaine</option>
+        <option value="growth_pct_week">Trier par croissance % / semaine</option>
       </select>
     </div>
   </section>
@@ -604,6 +606,7 @@ function renderCard(c) {
         <span class="tag">${esc(capitalize(c.market || '?'))}</span>
         <span class="tag ${densityClass(score)}">${Math.round(score * 100)}% densité</span>
         ${c.detected_language ? `<span class="tag">${esc(c.detected_language)}</span>` : ''}
+        ${c.subs_gain != null ? `<span class="tag ${c.subs_gain > 0 ? 'good' : ''}" title="Comparé à il y a ${c.gain_days} jours (YouTube arrondit les abonnés)">${c.subs_gain > 0 ? '+' : ''}${fmt(c.subs_gain)} abonnés / ${c.gain_days} j${c.growth_pct_week != null ? ' · ' + c.growth_pct_week + ' %/sem' : ''}</span>` : ''}
         ${c.face_flag ? `<span class="tag face" title="Visage ? ${esc(c.face_hint || '')}" aria-label="Visage possible"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 15c1 1.2 2.1 1.8 3.5 1.8s2.5-.6 3.5-1.8"/><path d="M9 9.5h.01M15 9.5h.01"/></svg></span>` : ''}
       </div>
       <div class="stats">
