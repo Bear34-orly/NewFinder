@@ -192,3 +192,118 @@ def validate_channel_activity(channel: dict, api_key: str, strong_max_age_days: 
         "total_videos_checked": len(check["video_ids"]),
         "recent_thumbnail_ids": recent_thumbnail_ids,
     }
+
+
+# ---------------------------------------------------------------------------
+# Nouveau site (radar seulement) : critères d'entrée d'une chaîne
+# ---------------------------------------------------------------------------
+
+MAX_PAGES_NEW_CHANNEL = 10     # 10 pages de 50 vidéos : au-delà, la chaîne a beaucoup trop de vidéos pour être jeune
+
+
+def check_new_channel_videos(uploads_playlist_id: str, max_age_days: int, active_days: int) -> dict:
+    """
+    Lit les vidéos de la chaîne de la plus récente à la plus ancienne (1 unité de quota par 50 vidéos) :
+      - la plus récente doit avoir moins de `active_days` jours (sinon REJECTED_INACTIVE) ;
+      - dès qu'une vidéo a plus de `max_age_days` jours, la lecture s'arrête (REJECTED_TOO_OLD).
+    Retourne {"status": "OK", "video_ids": [...]} si toutes les vidéos sont assez récentes.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff_age = now - timedelta(days=max_age_days)
+    cutoff_active = now - timedelta(days=active_days)
+
+    video_ids = []
+    page_token = None
+    is_first_video = True
+    pages = 0
+
+    while True:
+        params = {"part": "contentDetails", "playlistId": uploads_playlist_id, "maxResults": 50}
+        if page_token:
+            params["pageToken"] = page_token
+
+        resp = _safe_get(YOUTUBE_PLAYLIST_ITEMS_URL, params)
+        if resp is None:
+            return {"status": "NETWORK_ERROR", "video_ids": []}
+        if resp.status_code != 200:
+            print(f"  [!] Erreur playlistItems ({resp.status_code}): {resp.text[:150]}")
+            return {"status": "ERROR", "video_ids": []}
+
+        data = resp.json()
+        for item in data.get("items", []):
+            cd = item.get("contentDetails", {})
+            video_id = cd.get("videoId")
+            published_str = cd.get("videoPublishedAt")
+            if not video_id or not published_str:
+                continue
+            published = _parse_date(published_str)
+
+            if is_first_video:
+                is_first_video = False
+                if published < cutoff_active:
+                    return {"status": "REJECTED_INACTIVE", "video_ids": []}
+
+            if published < cutoff_age:
+                return {"status": "REJECTED_TOO_OLD", "video_ids": []}
+
+            video_ids.append(video_id)
+
+        pages += 1
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            return {"status": "OK", "video_ids": video_ids}
+        if pages >= MAX_PAGES_NEW_CHANNEL:
+            return {"status": "REJECTED_TOO_MANY_VIDEOS", "video_ids": []}
+        time.sleep(0.1)
+
+
+def validate_new_channel(channel: dict, max_age_days: int, active_days: int, min_videos: int,
+                         min_views: int, min_strong_videos: int) -> dict:
+    """
+    Critères d'entrée du nouveau site :
+      1. au moins `min_strong_videos` vidéo(s) à `min_views` vues ou plus (pas de maximum) ;
+      2. au moins `min_videos` vidéos publiées ;
+      3. une vidéo publiée il y a moins de `active_days` jours ;
+      4. aucune vidéo de plus de `max_age_days` jours.
+    Aucune limite d'abonnés. Les contrôles les moins chers passent en premier.
+    """
+    uploads_playlist_id = channel.get("uploads_playlist_id")
+    if not uploads_playlist_id:
+        return {**channel, "activity_status": "NO_PLAYLIST"}
+
+    check = check_new_channel_videos(uploads_playlist_id, max_age_days, active_days)
+    if check["status"] != "OK":
+        return {**channel, "activity_status": check["status"]}
+
+    video_ids = check["video_ids"]
+    if len(video_ids) < min_videos:
+        return {**channel, "activity_status": "REJECTED_TOO_FEW_VIDEOS", "total_videos_checked": len(video_ids)}
+
+    video_stats = get_video_stats_batch(video_ids, "")
+    # Si une partie des lots a échoué (réseau), les chiffres seraient trop bas : on ne juge pas la chaîne.
+    if len(video_stats) < 0.9 * len(video_ids):
+        return {**channel, "activity_status": "NETWORK_ERROR"}
+
+    classified = classify_videos(video_stats, channel.get("subscriber_count"))
+    strong_videos = classified["strong"]
+    proven_videos = [v for v in video_stats if v["view_count"] >= min_views]
+    proven_videos = [{**v, "ratio": (v["view_count"] / channel["subscriber_count"]) if channel.get("subscriber_count") else None}
+                     for v in proven_videos]
+
+    if len(proven_videos) < min_strong_videos:
+        return {**channel, "activity_status": "REJECTED_NO_STRONG_VIDEO", "total_videos_checked": len(video_ids)}
+
+    channel_status = "PROVEN" if len(proven_videos) >= MIN_PROVEN_VIDEOS else "WATCHLIST"
+
+    return {
+        **channel,
+        "activity_status": "VALID",
+        "channel_status": channel_status,
+        "strong_video_count": len(strong_videos),
+        "proven_video_count": len(proven_videos),
+        "strong_videos": strong_videos,
+        "proven_videos": proven_videos,
+        "total_videos_checked": len(video_ids),
+        "recent_thumbnail_ids": video_ids[:4],
+    }
+

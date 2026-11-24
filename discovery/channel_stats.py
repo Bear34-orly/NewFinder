@@ -75,7 +75,7 @@ def get_channel_stats(channel_ids: list[str], api_key: str) -> dict[str, dict]:
 def enrich_with_channel_data(
     videos: list[dict],
     api_key: str,
-    max_subscribers: int = 100_000,
+    max_subscribers: int | None = 100_000,
 ) -> list[dict]:
     channel_ids = list({v["channel_id"] for v in videos})
     stats = get_channel_stats(channel_ids, api_key)
@@ -88,7 +88,7 @@ def enrich_with_channel_data(
 
         subs = c["subscriber_count"]
 
-        if subs is not None and subs > max_subscribers:
+        if max_subscribers is not None and subs is not None and subs > max_subscribers:
             continue
 
         ratio = (v["view_count"] / subs) if subs else None

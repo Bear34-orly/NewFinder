@@ -6,13 +6,14 @@ calculés UNE seule fois, le jour de la découverte. Ensuite la chaîne publie d
 nouvelles vidéos et ses vues grimpent, mais la base ne le sait pas.
 
 Ce script relit chaque chaîne sur YouTube et met à jour uniquement les chiffres.
-Il enregistre aussi les titres des vidéos fortes (apprentissage des mots-clés).
+Il enregistre aussi les titres des vidéos fortes (utilisés par l'analyse des visages).
 Il ne supprime jamais rien : une chaîne devenue inactive est seulement signalée.
+Les critères d'entrée du radar (3 mois, 7 jours...) ne servent qu'à l'entrée : une chaîne déjà
+enregistrée reste dans la base même quand elle vieillit.
 
 Usage :
-    python -m discovery.refresh all
-    python -m discovery.refresh history animals
-    python -m discovery.refresh all --max 100      (les 100 plus anciennes d'abord)
+    python -m discovery.refresh
+    python -m discovery.refresh --max 100          (les 100 plus anciennes d'abord)
 
 Coût en quota : environ 3 à 4 unités par chaîne (aucune recherche à 100 unités).
 """
@@ -24,7 +25,7 @@ from datetime import datetime, timezone
 import requests
 
 from discovery.channel_activity import (
-    MAX_RETRIES, MIN_PROVEN_VIDEOS, MIN_STRONG_VIDEOS, RECENT_ACTIVITY_DAYS,
+    MAX_RETRIES, MIN_PROVEN_VIDEOS, RECENT_ACTIVITY_DAYS,
     REQUEST_TIMEOUT, RETRY_DELAY_SECONDS, YOUTUBE_PLAYLIST_ITEMS_URL,
     YOUTUBE_VIDEOS_URL, classify_videos, get_video_stats_batch,
 )
@@ -128,13 +129,13 @@ def compute_stats(info: dict, videos: list, old_subscribers) -> dict | None:
     }
 
 
-def refresh(market: str | None = None, max_channels: int | None = None) -> dict:
-    refs = list_channel_refs(None if not market or market == "all" else market)
+def refresh(max_channels: int | None = None) -> dict:
+    refs = list_channel_refs()
     if max_channels:
         refs = refs[:max_channels]
     print(f"{len(refs)} chaîne(s) à rafraîchir.\n")
 
-    result = {"updated": 0, "failed": 0, "inactive": [], "weak": [], "quota_stopped": False}
+    result = {"updated": 0, "failed": 0, "inactive": [], "quota_stopped": False}
     if not refs:
         return result
 
@@ -175,27 +176,17 @@ def refresh(market: str | None = None, max_channels: int | None = None) -> dict:
         last = days_since(videos[0]["published_at"])
         if last is not None and last > RECENT_ACTIVITY_DAYS:
             result["inactive"].append((name, last))
-        if stats["strong_video_count"] < MIN_STRONG_VIDEOS:
-            result["weak"].append(name)
 
     print(f"\n=== {result['updated']} mise(s) à jour, {result['failed']} non modifiée(s) ===")
     if result["inactive"]:
         print(f"\nChaînes sans nouvelle vidéo depuis plus de {RECENT_ACTIVITY_DAYS} jours (non supprimées) :")
         for name, d in result["inactive"]:
             print(f"  - {name} : {d} jours")
-    if result["weak"]:
-        print(f"\nChaînes passées sous {MIN_STRONG_VIDEOS} vidéos fortes (non supprimées) :")
-        for name in result["weak"]:
-            print(f"  - {name}")
     return result
 
 
 if __name__ == "__main__":
-    from config.markets import MARKETS
-
     parser = argparse.ArgumentParser(description="Met à jour les compteurs des chaînes déjà enregistrées.")
-    parser.add_argument("markets", nargs="*", default=["all"],
-                        help="Un ou plusieurs marchés, ou 'all' (par défaut).")
     parser.add_argument("--max", type=int, default=None,
                         help="Nombre maximum de chaînes à traiter (les plus anciennement vérifiées d'abord).")
     args = parser.parse_args()
@@ -203,13 +194,5 @@ if __name__ == "__main__":
     if not has_keys():
         raise SystemExit("Aucune clé API trouvée : renseigne YOUTUBE_API_KEYS dans .env.")
 
-    unknown = [m for m in args.markets if m != "all" and m not in MARKETS]
-    if unknown:
-        raise SystemExit(f"Marché(s) inconnu(s): {unknown}")
-
     print(f"{key_count()} clé(s) API chargée(s).")
-    for m in args.markets:
-        print(f"\n##### {m.upper()} #####")
-        r = refresh(m, args.max)
-        if r["quota_stopped"]:
-            break
+    refresh(args.max)

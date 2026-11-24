@@ -137,26 +137,18 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_video_titles_channel ON video_titles (channel_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_video_titles_market_lang ON video_titles (market, language)")
 
-        # Mots-clés de recherche par marché et par langue (utilisée à l'étape 4)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS keywords (
-                market TEXT NOT NULL,
-                language TEXT NOT NULL,
-                query TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'seed',
-                source TEXT,
-                times_run INTEGER NOT NULL DEFAULT 0,
-                channels_found INTEGER NOT NULL DEFAULT 0,
-                validated_found INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT,
-                last_run_at TEXT,
-                PRIMARY KEY (market, language, query)
-            )
-        """)
-
-        # Carte du radar : une ligne par "case" (catégorie + durée + tranche de dates)
+        # Carte du radar : une ligne par "case" (langue + catégorie + durée + tranche de dates).
+        # Ancienne version (sans colonne language) : on la supprime, ce n'est qu'une carte de progression,
+        # le radar la reconstruit tout seul.
+        cur.execute("SELECT to_regclass('radar_cells') IS NOT NULL")
+        if cur.fetchone()[0]:
+            cur.execute("SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name = 'radar_cells' AND column_name = 'language'")
+            if cur.fetchone() is None:
+                cur.execute("DROP TABLE radar_cells")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS radar_cells (
+                language TEXT NOT NULL,
                 category TEXT NOT NULL,
                 duration TEXT NOT NULL,
                 slice_start TEXT NOT NULL,
@@ -169,25 +161,9 @@ def init_db():
                 created_at TEXT,
                 finished_at TEXT,
                 last_run_at TEXT,
-                PRIMARY KEY (category, duration, slice_start, slice_end)
+                PRIMARY KEY (language, category, duration, slice_start, slice_end)
             )
         """)
-
-        # Historique : UNE ligne par chaîne et par jour (jamais écrasée par le lendemain).
-        # Permet de voir qui monte vite (abonnés gagnés sur 7 jours, etc.).
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS channel_history (
-                channel_id TEXT NOT NULL,
-                recorded_on DATE NOT NULL,
-                subscriber_count BIGINT,
-                view_count BIGINT,
-                video_count INTEGER,
-                strong_video_count INTEGER,
-                proven_video_count INTEGER,
-                PRIMARY KEY (channel_id, recorded_on)
-            )
-        """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_channel_history_day ON channel_history (recorded_on)")
     conn.commit()
     conn.close()
     _initialized = True
@@ -259,8 +235,6 @@ def save_validated_channels(channels: list[dict], market: str):
 
             _insert_titles(cur, c["channel_id"], market, c.get("detected_language"),
                            (c.get("strong_videos") or []) + (c.get("proven_videos") or []), now)
-            _write_history_row(cur, c["channel_id"], c.get("subscriber_count"), None, c.get("video_count"),
-                               c.get("strong_video_count"), c.get("proven_video_count"))
 
     conn.commit()
     conn.close()
@@ -346,169 +320,8 @@ def delete_channel(channel_id: str, reason: str = "unknown") -> bool:
             """, (datetime.now(timezone.utc).isoformat(), reason, channel_id))
             cur.execute("DELETE FROM channels WHERE channel_id = %s", (channel_id,))
             deleted = cur.rowcount > 0
-            cur.execute("DELETE FROM channel_history WHERE channel_id = %s", (channel_id,))
         conn.commit()
     return deleted
-
-
-# ---------------------------------------------------------------------------
-# Historique des chaînes (une ligne par chaîne et par jour)
-# ---------------------------------------------------------------------------
-
-def _today():
-    return datetime.now(timezone.utc).date()
-
-
-def _write_history_row(cur, channel_id, subscribers, views, video_count, strong, proven):
-    """
-    Écrit (ou met à jour) la ligne du jour d'une chaîne. Une valeur inconnue (None) n'efface jamais
-    une valeur déjà connue le même jour.
-    """
-    cur.execute("""
-        INSERT INTO channel_history (channel_id, recorded_on, subscriber_count, view_count, video_count,
-                                     strong_video_count, proven_video_count)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (channel_id, recorded_on) DO UPDATE SET
-            subscriber_count = COALESCE(EXCLUDED.subscriber_count, channel_history.subscriber_count),
-            view_count = COALESCE(EXCLUDED.view_count, channel_history.view_count),
-            video_count = COALESCE(EXCLUDED.video_count, channel_history.video_count),
-            strong_video_count = COALESCE(EXCLUDED.strong_video_count, channel_history.strong_video_count),
-            proven_video_count = COALESCE(EXCLUDED.proven_video_count, channel_history.proven_video_count)
-    """, (channel_id, _today(), subscribers, views, video_count, strong, proven))
-
-
-def list_channel_ids() -> list[str]:
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT channel_id FROM channels ORDER BY channel_id")
-            return [r[0] for r in cur.fetchall()]
-
-
-def save_history_snapshots(rows: list[dict]) -> int:
-    """
-    Photo du jour pour plusieurs chaînes. rows : dicts avec channel_id et, si connus,
-    subscriber_count, view_count, video_count. Met aussi à jour les abonnés et le nombre de vidéos
-    affichés sur le site (sans toucher aux autres chiffres). Retourne le nombre de chaînes traitées.
-    """
-    if not rows:
-        return 0
-    init_db()
-    day = _today()
-    with pooled_connection() as conn:
-        with conn.cursor() as cur:
-            psycopg2.extras.execute_values(cur, """
-                INSERT INTO channel_history (channel_id, recorded_on, subscriber_count, view_count, video_count)
-                VALUES %s
-                ON CONFLICT (channel_id, recorded_on) DO UPDATE SET
-                    subscriber_count = COALESCE(EXCLUDED.subscriber_count, channel_history.subscriber_count),
-                    view_count = COALESCE(EXCLUDED.view_count, channel_history.view_count),
-                    video_count = COALESCE(EXCLUDED.video_count, channel_history.video_count)
-            """, [(r["channel_id"], day, r.get("subscriber_count"), r.get("view_count"), r.get("video_count"))
-                  for r in rows])
-            psycopg2.extras.execute_values(cur, """
-                UPDATE channels AS c SET
-                    subscriber_count = COALESCE(v.subs, c.subscriber_count),
-                    video_count = COALESCE(v.vids, c.video_count)
-                FROM (VALUES %s) AS v(id, subs, vids)
-                WHERE c.channel_id = v.id
-            """, [(r["channel_id"], r.get("subscriber_count"), r.get("video_count")) for r in rows],
-                template="(%s, %s::bigint, %s::integer)")
-        conn.commit()
-    return len(rows)
-
-
-def seed_history_from_channels() -> int:
-    """
-    Première fois seulement : crée une ligne d'historique pour chaque chaîne déjà en base, avec les
-    chiffres de sa dernière vérification (à la date de cette vérification). Ne remplace jamais une ligne existante.
-    """
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO channel_history (channel_id, recorded_on, subscriber_count, video_count,
-                                             strong_video_count, proven_video_count)
-                SELECT channel_id, LEFT(COALESCE(last_checked_at, first_discovered_at), 10)::date,
-                       subscriber_count, video_count, strong_video_count, proven_video_count
-                FROM channels
-                WHERE subscriber_count IS NOT NULL
-                  AND COALESCE(last_checked_at, first_discovered_at) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-                ON CONFLICT (channel_id, recorded_on) DO NOTHING
-            """)
-            n = cur.rowcount
-        conn.commit()
-    return n
-
-
-def history_summary() -> dict:
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*), COUNT(DISTINCT channel_id), MIN(recorded_on), MAX(recorded_on), "
-                        "COUNT(DISTINCT recorded_on) FROM channel_history")
-            rows, channels, first, last, days = cur.fetchone()
-    return {"rows": rows, "channels": channels, "first_day": first, "last_day": last, "days_recorded": days}
-
-
-GROWTH_MIN_SPAN_DAYS = 2      # en dessous, la différence est trop courte pour parler de croissance
-
-
-def load_growth(days: int = 7) -> dict:
-    """
-    Croissance de chaque chaîne : dernière photo comparée à la photo d'il y a `days` jours
-    (la plus proche qui a au moins `days` jours ; sinon la plus ancienne disponible).
-    Retourne {channel_id: {subs_gain, gain_days, subs_gain_week, growth_pct_week, views_gain_week}}.
-    Les abonnés sont arrondis par YouTube (3 chiffres significatifs) : un petit gain peut rester invisible.
-    """
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                WITH latest AS (
-                    SELECT DISTINCT ON (channel_id) channel_id, recorded_on, subscriber_count, view_count
-                    FROM channel_history
-                    WHERE subscriber_count IS NOT NULL
-                    ORDER BY channel_id, recorded_on DESC
-                ),
-                base AS (
-                    SELECT DISTINCT ON (l.channel_id)
-                           l.channel_id, h.recorded_on AS base_on, h.subscriber_count AS base_subs,
-                           h.view_count AS base_views
-                    FROM latest l
-                    JOIN channel_history h
-                      ON h.channel_id = l.channel_id
-                     AND h.subscriber_count IS NOT NULL
-                     AND h.recorded_on < l.recorded_on
-                    ORDER BY l.channel_id,
-                             (h.recorded_on <= l.recorded_on - %s) DESC,
-                             CASE WHEN h.recorded_on <= l.recorded_on - %s THEN h.recorded_on END DESC NULLS LAST,
-                             h.recorded_on ASC
-                )
-                SELECT l.channel_id, l.subscriber_count AS subs_now, b.base_subs,
-                       (l.recorded_on - b.base_on) AS span_days,
-                       l.view_count AS views_now, b.base_views
-                FROM latest l JOIN base b USING (channel_id)
-            """, (days, days))
-            rows = cur.fetchall()
-
-    growth = {}
-    for r in rows:
-        span = r["span_days"]
-        if span is None or span < GROWTH_MIN_SPAN_DAYS:
-            continue
-        gain = r["subs_now"] - r["base_subs"]
-        item = {
-            "subs_gain": gain,
-            "gain_days": span,
-            "subs_gain_week": round(gain * 7 / span),
-            "growth_pct_week": round(gain / r["base_subs"] * 100 * 7 / span, 2) if r["base_subs"] else None,
-            "views_gain_week": None,
-        }
-        if r["views_now"] is not None and r["base_views"] is not None:
-            item["views_gain_week"] = round((r["views_now"] - r["base_views"]) * 7 / span)
-        growth[r["channel_id"]] = item
-    return growth
 
 
 def list_channel_refs(market: str | None = None) -> list[dict]:
@@ -554,9 +367,6 @@ def update_channel_stats(channel_id: str, stats: dict) -> bool:
                 stats.get("channel_status"), recent_ids, now, channel_id,
             ))
             updated = cur.rowcount > 0
-            if updated:
-                _write_history_row(cur, channel_id, stats.get("subscriber_count"), None, stats.get("video_count"),
-                                   stats.get("strong_video_count"), stats.get("proven_video_count"))
         conn.commit()
     return updated
 
@@ -644,7 +454,7 @@ def update_face_scores(channel_id: str, face_ratio: float | None = None,
 
 
 # ---------------------------------------------------------------------------
-# Moteur de mots-clés (étape 4)
+# Chaînes déjà connues
 # ---------------------------------------------------------------------------
 
 def existing_channel_ids(channel_ids: list[str]) -> set:
@@ -658,173 +468,28 @@ def existing_channel_ids(channel_ids: list[str]) -> set:
             return {r[0] for r in cur.fetchall()}
 
 
-def load_keyword_corpus(market: str, language: str) -> tuple[list[dict], list[dict]]:
-    """
-    Titres servant à apprendre des mots-clés pour un marché et une langue.
-
-    Retourne (positifs, négatifs) :
-      - positifs : titres des vidéos fortes des chaînes ENCORE en base ;
-      - négatifs : titres des chaînes supprimées par l'utilisateur pour 'face' ou 'topic'
-        (on ne veut pas apprendre ce qui ramène ce type de chaînes).
-    Chaque ligne : {channel_id, title, views}. Les chaînes supprimées sans raison ('unknown')
-    sont ignorées des deux côtés.
-    """
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                SELECT vt.channel_id, vt.title, vt.views
-                FROM video_titles vt
-                JOIN channels c ON c.channel_id = vt.channel_id
-                WHERE vt.market = %s AND vt.language = %s AND vt.title IS NOT NULL
-            """, (market, language))
-            positives = [dict(r) for r in cur.fetchall()]
-
-            cur.execute("""
-                SELECT vt.channel_id, vt.title, vt.views
-                FROM video_titles vt
-                JOIN rejected_channels r ON r.channel_id = vt.channel_id
-                WHERE vt.market = %s AND vt.language = %s AND vt.title IS NOT NULL
-                  AND r.reject_reason IN ('face', 'topic')
-            """, (market, language))
-            negatives = [dict(r) for r in cur.fetchall()]
-
-            # Meilleure vidéo des chaînes refusées (au cas où leurs titres n'aient pas été enregistrés)
-            cur.execute("""
-                SELECT channel_id, best_video_title AS title, 0 AS views
-                FROM rejected_channels
-                WHERE market = %s AND detected_language = %s AND best_video_title IS NOT NULL
-                  AND reject_reason IN ('face', 'topic')
-            """, (market, language))
-            negatives += [dict(r) for r in cur.fetchall()]
-    return positives, negatives
-
-
-def list_keywords(market: str | None = None, language: str | None = None,
-                  statuses: list[str] | None = None) -> list[dict]:
-    """Mots-clés appris, bannis ou retirés (les seeds sont dans la configuration, pas ici)."""
-    init_db()
-    sql = ("SELECT market, language, query, status, source, times_run, channels_found, "
-           "validated_found, created_at, last_run_at FROM keywords WHERE TRUE")
-    params = []
-    if market:
-        sql += " AND market = %s"
-        params.append(market)
-    if language:
-        sql += " AND language = %s"
-        params.append(language)
-    if statuses:
-        sql += " AND status = ANY(%s)"
-        params.append(list(statuses))
-    sql += " ORDER BY market, language, status, created_at"
-    with pooled_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, params)
-            return [dict(r) for r in cur.fetchall()]
-
-
-def add_keyword(market: str, language: str, query: str, status: str = "test",
-                source: str = "learned") -> bool:
-    """Ajoute un mot-clé (sans rien écraser s'il existe déjà). Retourne True si ajouté."""
-    init_db()
-    now = datetime.now(timezone.utc).isoformat()
-    with pooled_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO keywords (market, language, query, status, source, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (market, language, query) DO NOTHING
-            """, (market, language, query, status, source, now))
-            added = cur.rowcount > 0
-        conn.commit()
-    return added
-
-
-def ban_keyword(market: str, language: str, query: str) -> None:
-    """Interdit un mot-clé : il ne sera plus jamais proposé ni testé."""
-    init_db()
-    now = datetime.now(timezone.utc).isoformat()
-    with pooled_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO keywords (market, language, query, status, source, created_at)
-                VALUES (%s, %s, %s, 'banned', 'manual', %s)
-                ON CONFLICT (market, language, query) DO UPDATE SET status = 'banned'
-            """, (market, language, query, now))
-        conn.commit()
-
-
-def unban_keyword(market: str, language: str, query: str) -> bool:
-    """Lève l'interdiction (la ligne est supprimée : le mot-clé pourra être reproposé)."""
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM keywords WHERE market = %s AND language = %s AND query = %s "
-                        "AND status = 'banned'", (market, language, query))
-            removed = cur.rowcount > 0
-        conn.commit()
-    return removed
-
-
-def record_keyword_run(market: str, language: str, query: str, channels_found: int,
-                       validated_found: int, new_status: str, new_source: str | None = None) -> None:
-    """Ajoute les résultats d'une passe à un mot-clé et met à jour son statut (et son origine si demandé)."""
-    init_db()
-    now = datetime.now(timezone.utc).isoformat()
-    with pooled_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE keywords SET
-                    times_run = times_run + 1,
-                    channels_found = channels_found + %s,
-                    validated_found = validated_found + %s,
-                    status = %s,
-                    source = COALESCE(%s, source),
-                    last_run_at = %s
-                WHERE market = %s AND language = %s AND query = %s
-            """, (channels_found, validated_found, new_status, new_source, now, market, language, query))
-        conn.commit()
-
-
-def load_radar_corpus(language: str) -> list[dict]:
-    """
-    Titres des vidéos fortes des chaînes trouvées par le radar (channels.query_source = 'radar'),
-    pour une langue. Chaque ligne : {channel_id, market, title, views}.
-    """
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                SELECT vt.channel_id, c.market AS market, vt.title, vt.views
-                FROM video_titles vt
-                JOIN channels c ON c.channel_id = vt.channel_id
-                WHERE c.query_source = 'radar' AND vt.language = %s AND vt.title IS NOT NULL
-            """, (language,))
-            return [dict(r) for r in cur.fetchall()]
-
-
 # ---------------------------------------------------------------------------
 # Radar : carte des cases explorées
 # ---------------------------------------------------------------------------
 
-_CELL_COLS = ("category", "duration", "slice_start", "slice_end", "state", "pages_done", "page_token",
+_CELL_COLS = ("language", "category", "duration", "slice_start", "slice_end", "state", "pages_done", "page_token",
               "videos_seen", "videos_qualifying", "created_at", "finished_at", "last_run_at")
 
 
-def radar_load_cells() -> list[dict]:
+def radar_load_cells(language: str) -> list[dict]:
     init_db()
     with pooled_connection() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT " + ", ".join(_CELL_COLS) + " FROM radar_cells")
+            cur.execute("SELECT " + ", ".join(_CELL_COLS) + " FROM radar_cells WHERE language = %s", (language,))
             return [dict(r) for r in cur.fetchall()]
 
 
 def radar_save_cell(cell: dict) -> None:
-    """Crée ou met à jour une case (clé : category, duration, slice_start, slice_end)."""
+    """Crée ou met à jour une case (clé : language, category, duration, slice_start, slice_end)."""
     init_db()
     now = datetime.now(timezone.utc).isoformat()
     values = {
-        "category": cell["category"], "duration": cell["duration"],
+        "language": cell["language"], "category": cell["category"], "duration": cell["duration"],
         "slice_start": cell["slice_start"], "slice_end": cell["slice_end"],
         "state": cell.get("state", "open"), "pages_done": cell.get("pages_done", 0),
         "page_token": cell.get("page_token"), "videos_seen": cell.get("videos_seen", 0),
@@ -833,63 +498,12 @@ def radar_save_cell(cell: dict) -> None:
         "last_run_at": cell.get("last_run_at"),
     }
     cols = list(values.keys())
-    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols
-                        if c not in ("category", "duration", "slice_start", "slice_end", "created_at"))
+    key = ("language", "category", "duration", "slice_start", "slice_end")
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in key + ("created_at",))
     with pooled_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO radar_cells (" + ", ".join(cols) + ") VALUES (" + ", ".join(["%s"] * len(cols)) + ") "
-                "ON CONFLICT (category, duration, slice_start, slice_end) DO UPDATE SET " + updates,
+                "ON CONFLICT (" + ", ".join(key) + ") DO UPDATE SET " + updates,
                 [values[c] for c in cols])
-        conn.commit()
-
-
-# ---------------------------------------------------------------------------
-# Radar : classement des chaînes dans les marchés
-# ---------------------------------------------------------------------------
-
-def load_market_corpus(language: str) -> list[dict]:
-    """Titres des vidéos fortes des chaînes classées dans un vrai marché par la découverte habituelle (pas par le radar)."""
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                SELECT c.market AS market, vt.channel_id, vt.title
-                FROM video_titles vt
-                JOIN channels c ON c.channel_id = vt.channel_id
-                WHERE c.market IS NOT NULL AND c.market <> 'radar'
-                  AND COALESCE(c.query_source, '') <> 'radar'
-                  AND vt.language = %s AND vt.title IS NOT NULL
-            """, (language,))
-            return [dict(r) for r in cur.fetchall()]
-
-
-def list_unclassified_channels(language: str) -> list[dict]:
-    """Chaînes trouvées par le radar (quel que soit leur marché actuel), avec tous leurs titres connus."""
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                SELECT channel_id, channel_title, best_video_title, channel_description, market
-                FROM channels WHERE query_source = 'radar' AND detected_language = %s
-            """, (language,))
-            chans = [dict(r) for r in cur.fetchall()]
-            ids = [c["channel_id"] for c in chans]
-            titles = {}
-            if ids:
-                cur.execute("SELECT channel_id, title FROM video_titles WHERE channel_id = ANY(%s)", (ids,))
-                for r in cur.fetchall():
-                    titles.setdefault(r["channel_id"], []).append(r["title"])
-    for c in chans:
-        c["titles"] = titles.get(c["channel_id"], [])
-    return chans
-
-
-def set_channel_market(channel_id: str, market: str) -> None:
-    """Déplace une chaîne (et ses titres de vidéos) vers un autre marché."""
-    init_db()
-    with pooled_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE channels SET market = %s WHERE channel_id = %s", (market, channel_id))
-            cur.execute("UPDATE video_titles SET market = %s WHERE channel_id = %s", (market, channel_id))
         conn.commit()

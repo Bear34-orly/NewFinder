@@ -1,17 +1,15 @@
-# Robot quotidien du Niche Finder (GitHub Actions)
+# Robot quotidien du radar (GitHub Actions)
 #
 # Chaque jour, vers 14h00 (heure de l'Inde), une fois les clés YouTube remises à zéro :
-#   1. le radar (vidéos fortes sans mot-clé)
-#   2. le rangement des chaînes du radar dans les marchés (--reclassify)
-#   3. la découverte de la langue du jour, sur tous les marchés (en, es, fr, de, ru à tour de rôle)
-#   4. le refresh des compteurs de chaînes, tous les 3 jours
-# Les mots-clés (radar et appris) sont créés automatiquement pendant les étapes 1 et 3.
+#   1. le radar, dans la langue du jour (en, es, fr, de, ru à tour de rôle)
+#   2. le refresh des compteurs de chaînes, tous les 3 jours
+# Il n'y a plus de marchés ni de mots-clés.
 #
 # Secrets à créer dans GitHub (Settings > Secrets and variables > Actions) :
 #   DATABASE_URL        adresse de la base Supabase (utilise l'adresse "pooler")
 #   YOUTUBE_API_KEYS    les 20 clés séparées par des virgules
 
-name: Découverte quotidienne
+name: Radar quotidien
 
 on:
   schedule:
@@ -19,14 +17,10 @@ on:
   workflow_dispatch:            # lancement à la main depuis l'onglet Actions (pour tester)
     inputs:
       language:
-        description: "Langue de la découverte (auto = langue du jour)"
+        description: "Langue du radar (auto = langue du jour)"
         type: choice
         default: auto
-        options: [auto, en, es, fr, de, ru, aucune]
-      markets:
-        description: "Marchés de la découverte (all = tous ; ex : history finance pour tester)"
-        type: string
-        default: all
+        options: [auto, en, es, fr, de, ru]
       radar_budget:
         description: "Budget de recherche du radar, en unités (0 = pas de radar)"
         type: string
@@ -45,7 +39,7 @@ concurrency:
 jobs:
   quotidien:
     runs-on: ubuntu-latest
-    timeout-minutes: 345        # GitHub coupe à 6 h ; chaque marché est enregistré dès qu'il est fini
+    timeout-minutes: 345        # GitHub coupe à 6 h ; chaque chaîne est enregistrée dès qu'elle est validée
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       YOUTUBE_API_KEYS: ${{ secrets.YOUTUBE_API_KEYS }}
@@ -106,48 +100,24 @@ jobs:
           BUDGET="${{ inputs.radar_budget }}"
           if [ -z "$BUDGET" ]; then BUDGET=15000; fi
           if [ "$BUDGET" = "0" ]; then echo "Radar désactivé pour ce lancement."; exit 0; fi
-          python -m discovery.radar --budget "$BUDGET"
-
-      - name: Ranger les chaînes du radar dans les marchés
-        id: reclass
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        run: python -m discovery.radar --reclassify
-
-      - name: Découverte de la langue du jour
-        id: decouverte
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        run: |
-          if [ "$LANGUE_DU_JOUR" = "aucune" ]; then echo "Pas de découverte pour ce lancement."; exit 0; fi
-          MARKETS="${{ inputs.markets }}"
-          if [ -z "$MARKETS" ]; then MARKETS=all; fi
-          python -m discovery.search $MARKETS --lang "$LANGUE_DU_JOUR"
+          python -m discovery.radar --language "$LANGUE_DU_JOUR" --budget "$BUDGET"
 
       - name: Refresh des compteurs de chaînes
         id: refresh
         if: ${{ !cancelled() && env.FAIRE_REFRESH == 'oui' }}
         continue-on-error: true
-        run: python -m discovery.refresh all
-
-      - name: Photo du jour des chaînes (historique)
-        id: historique
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        run: python -m discovery.history
+        run: python -m discovery.refresh
 
       - name: État de la carte du radar
         if: ${{ !cancelled() }}
         continue-on-error: true
-        run: python -m discovery.radar --status
+        run: python -m discovery.radar --status --language "$LANGUE_DU_JOUR"
 
       - name: Conclure (échec si une étape a échoué)
         if: ${{ !cancelled() }}
         run: |
           FAIL=0
-          for etape in "radar=${{ steps.radar.outcome }}" "reclassement=${{ steps.reclass.outcome }}" \
-                       "découverte=${{ steps.decouverte.outcome }}" "refresh=${{ steps.refresh.outcome }}" \
-                       "historique=${{ steps.historique.outcome }}"; do
+          for etape in "radar=${{ steps.radar.outcome }}" "refresh=${{ steps.refresh.outcome }}"; do
             if [ "${etape#*=}" = "failure" ]; then echo "Étape en échec : ${etape%%=*}"; FAIL=1; fi
           done
           exit $FAIL

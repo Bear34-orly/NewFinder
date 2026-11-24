@@ -353,15 +353,12 @@
   <section class="toolbar" id="toolbar">
     <div class="field-row">
       <input type="search" id="search" placeholder="Rechercher une chaîne...">
-      <select id="market"><option value="all">Tous les marchés</option></select>
       <select id="language"><option value="all">Toutes les langues</option></select>
       <select id="sort">
         <option value="density_score">Trier par densité</option>
         <option value="subscriber_count">Trier par abonnés</option>
         <option value="proven_video_count">Trier par vidéos ≥100K</option>
         <option value="first_discovered_at">Trier par date de découverte</option>
-        <option value="subs_gain_week">Trier par abonnés gagnés / semaine</option>
-        <option value="growth_pct_week">Trier par croissance % / semaine</option>
       </select>
     </div>
   </section>
@@ -388,7 +385,7 @@
 const PAGE_SIZE = 48;
 let adminKey = null;
 let currentView = 'new';
-let currentStatus = 'proven';
+let currentStatus = 'all';
 let currentPage = 'channels';
 let visibleCount = PAGE_SIZE;
 let currentChannels = [];
@@ -533,25 +530,6 @@ function showMessage(title, text, withRetry) {
   $('more-wrap').style.display = 'none';
 }
 
-/* ---------- Marchés ---------- */
-async function loadMarkets() {
-  try {
-    const res = await fetch('/api/markets');
-    if (!res.ok) throw new Error();
-    const markets = await res.json();
-    const select = $('market');
-    const current = select.value;
-    select.innerHTML = '<option value="all">Tous les marchés</option>';
-    markets.forEach(m => {
-      const o = document.createElement('option');
-      o.value = m;
-      o.textContent = capitalize(m);
-      select.appendChild(o);
-    });
-    select.value = markets.includes(current) ? current : 'all';
-  } catch (e) { /* le filtre garde "Tous les marchés" */ }
-}
-
 /* ---------- Langues ---------- */
 const LANGUAGE_NAMES = { en: 'Anglais', es: 'Espagnol', fr: 'Français', de: 'Allemand', ru: 'Russe' };
 async function loadLanguages() {
@@ -603,10 +581,8 @@ function renderCard(c) {
     <div class="card-body">
       ${c.channel_description ? `<div class="desc">${esc(c.channel_description)}</div>` : ''}
       <div class="tags">
-        <span class="tag">${esc(capitalize(c.market || '?'))}</span>
         <span class="tag ${densityClass(score)}">${Math.round(score * 100)}% densité</span>
         ${c.detected_language ? `<span class="tag">${esc(c.detected_language)}</span>` : ''}
-        ${c.subs_gain != null ? `<span class="tag ${c.subs_gain > 0 ? 'good' : ''}" title="Comparé à il y a ${c.gain_days} jours (YouTube arrondit les abonnés)">${c.subs_gain > 0 ? '+' : ''}${fmt(c.subs_gain)} abonnés / ${c.gain_days} j${c.growth_pct_week != null ? ' · ' + c.growth_pct_week + ' %/sem' : ''}</span>` : ''}
         ${c.face_flag ? `<span class="tag face" title="Visage ? ${esc(c.face_hint || '')}" aria-label="Visage possible"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 15c1 1.2 2.1 1.8 3.5 1.8s2.5-.6 3.5-1.8"/><path d="M9 9.5h.01M15 9.5h.01"/></svg></span>` : ''}
       </div>
       <div class="stats">
@@ -651,7 +627,6 @@ async function loadChannels() {
 
   const params = new URLSearchParams({
     search: $('search').value,
-    market: $('market').value,
     language: $('language').value,
     view: currentView,
     status: currentStatus,
@@ -729,8 +704,8 @@ async function deleteChannel(channelId, title) {
 }
 
 /* ---------- Statistiques ---------- */
-function openMarket(market) {
-  $('market').value = market;
+function openLanguage(language) {
+  $('language').value = language;
   currentView = 'all';
   currentStatus = 'all';
   showPage('channels');
@@ -747,11 +722,11 @@ async function loadStats() {
     const s = await res.json();
     const t = s.totals;
 
-    const maxChannels = Math.max(1, ...s.markets.map(m => m.channels));
+    const maxChannels = Math.max(1, ...s.languages.map(m => m.channels));
 
-    const rows = s.markets.map(m => `
-      <tr class="row-link" data-market="${esc(m.market)}">
-        <td><b>${esc(capitalize(m.market))}</b></td>
+    const rows = s.languages.map(m => `
+      <tr class="row-link" data-language="${esc(m.language)}">
+        <td><b>${esc(LANGUAGE_NAMES[m.language] || capitalize(m.language))}</b></td>
         <td class="num">${fmt(m.channels)}</td>
         <td><div class="bar"><i style="width:${Math.round(m.channels / maxChannels * 100)}%"></i></div></td>
         <td class="num">${fmt(m.proven)}</td>
@@ -761,9 +736,9 @@ async function loadStats() {
         <td class="num">${fmt(m.added_30d)}</td>
       </tr>`).join('');
 
-    const tops = s.markets.map(m => `
+    const tops = s.languages.map(m => `
       <div class="top-card">
-        <h3>${esc(capitalize(m.market))}</h3>
+        <h3>${esc(LANGUAGE_NAMES[m.language] || capitalize(m.language))}</h3>
         ${m.top_channels.map(c => `
           <a href="${esc(c.channel_url)}" target="_blank" rel="noopener">
             <span>${esc(c.channel_title || 'Sans nom')}</span>
@@ -781,11 +756,11 @@ async function loadStats() {
       </div>
 
       <div class="panel">
-        <h2>Par marché <span style="color:var(--muted);font-weight:400;font-size:12px">(clique sur une ligne pour voir ses chaînes)</span></h2>
+        <h2>Par langue <span style="color:var(--muted);font-weight:400;font-size:12px">(clique sur une ligne pour voir ses chaînes)</span></h2>
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>Marché</th><th class="num">Chaînes</th><th></th><th class="num">Proven</th>
+              <th>Langue</th><th class="num">Chaînes</th><th></th><th class="num">Proven</th>
               <th class="num">Watchlist</th><th class="num">Abonnés moy.</th>
               <th class="num">Densité moy.</th><th class="num">+30 jours</th>
             </tr></thead>
@@ -795,12 +770,12 @@ async function loadStats() {
       </div>
 
       <div class="panel">
-        <h2>Meilleures chaînes par marché <span style="color:var(--muted);font-weight:400;font-size:12px">(par nombre de vidéos ≥100K)</span></h2>
+        <h2>Meilleures chaînes par langue <span style="color:var(--muted);font-weight:400;font-size:12px">(par nombre de vidéos ≥100K)</span></h2>
         <div class="top-grid">${tops}</div>
       </div>`;
 
     box.querySelectorAll('tr.row-link').forEach(tr =>
-      tr.addEventListener('click', () => openMarket(tr.dataset.market)));
+      tr.addEventListener('click', () => openLanguage(tr.dataset.language)));
   } catch (e) {
     box.innerHTML = '<div class="message"><b>Impossible de charger les statistiques</b>Le serveur ou la base ne répond pas.<br><button class="icon-btn" id="stats-retry">Réessayer</button></div>';
     $('stats-retry').addEventListener('click', loadStats);
@@ -812,14 +787,13 @@ $('search').addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(loadChannels, 250);
 });
-$('market').addEventListener('change', loadChannels);
 $('language').addEventListener('change', loadChannels);
 $('sort').addEventListener('change', loadChannels);
 $('more-btn').addEventListener('click', () => { visibleCount += PAGE_SIZE; renderGrid(); });
 
 initTheme();
 updateSidebar();
-loadMarkets().then(loadLanguages).then(loadChannels);
+loadLanguages().then(loadChannels);
 </script>
 <script src="/static/competition.js?v=1"></script>
 

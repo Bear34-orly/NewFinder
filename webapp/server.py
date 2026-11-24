@@ -1,7 +1,7 @@
 """
 Serveur qui lit la base PostgreSQL et sert une page web avec recherche,
-filtre par marché, temps (nouveau/tout), statut (proven/watchlist) et
-statistiques par marché. Contient aussi la page Concurrence (voir
+filtre par langue, temps (nouveau/tout), statut (proven/watchlist) et
+statistiques par langue. Contient aussi la page Concurrence (voir
 webapp/competition_routes.py).
 
 Le site est protégé par un mot de passe SI la variable SITE_PASSWORD existe ; sans elle, le site est OUVERT à tous.
@@ -24,7 +24,7 @@ from flask import (Flask, Response, jsonify, redirect, render_template,
 
 from config.face_settings import FACE_TAG_SAME_RATIO
 from config.faceless_signals import DOUBTFUL_RATIO
-from discovery.database import delete_channel, list_all_channels, load_growth
+from discovery.database import delete_channel, list_all_channels
 from webapp.competition_routes import bp as competition_bp
 
 load_dotenv()
@@ -121,18 +121,7 @@ def _get_channels_cached() -> list[dict]:
     now = time.time()
     if _cache["data"] is None or now - _cache["time"] > CACHE_SECONDS:
         channels = list_all_channels()
-        try:
-            growth = load_growth(7)
-        except Exception as e:           # l'historique ne doit jamais casser le site
-            print(f"Croissance indisponible : {e}")
-            growth = {}
         for c in channels:
-            g = growth.get(c["channel_id"]) or {}
-            c["subs_gain"] = g.get("subs_gain")
-            c["gain_days"] = g.get("gain_days")
-            c["subs_gain_week"] = g.get("subs_gain_week")
-            c["growth_pct_week"] = g.get("growth_pct_week")
-            c["views_gain_week"] = g.get("views_gain_week")
             c["is_new"] = _is_new(c)
             reasons = _face_reasons(c)
             c["face_flag"] = bool(reasons)
@@ -229,7 +218,6 @@ def index():
 @app.route("/api/channels")
 def api_channels():
     search = request.args.get("search", "").strip().lower()
-    market = request.args.get("market", "").strip().lower()
     language = request.args.get("language", "").strip().lower()
     view = request.args.get("view", "new").strip().lower()
     status = request.args.get("status", "all").strip().lower()
@@ -241,9 +229,6 @@ def api_channels():
 
     if status in ("proven", "watchlist"):
         channels = [c for c in channels if (c.get("channel_status") or "").lower() == status]
-
-    if market and market != "all":
-        channels = [c for c in channels if (c.get("market") or "").lower() == market]
 
     if language and language != "all":
         channels = [c for c in channels if (c.get("detected_language") or "").lower() == language]
@@ -271,13 +256,6 @@ def api_delete_channel(channel_id):
     return jsonify({"error": "Chaîne introuvable"}), 404
 
 
-@app.route("/api/markets")
-def api_markets():
-    channels = _get_channels_cached()
-    markets = sorted({c["market"] for c in channels if c.get("market")})
-    return jsonify(markets)
-
-
 @app.route("/api/languages")
 def api_languages():
     channels = _get_channels_cached()
@@ -287,7 +265,7 @@ def api_languages():
 
 @app.route("/api/stats")
 def api_stats():
-    """Statistiques globales et par marché, calculées sur les chaînes en base."""
+    """Statistiques globales et par langue, calculées sur les chaînes en base."""
     channels = _get_channels_cached()
     now = datetime.now(timezone.utc)
     cutoff_7 = now - timedelta(days=7)
@@ -308,18 +286,18 @@ def api_stats():
         "added_30d": sum(1 for c in channels if added_since(c, cutoff_30)),
     }
 
-    by_market = {}
+    by_language = {}
     for c in channels:
-        by_market.setdefault((c.get("market") or "inconnu"), []).append(c)
+        by_language.setdefault((c.get("detected_language") or "inconnu").lower(), []).append(c)
 
-    markets = []
-    for name, items in by_market.items():
+    languages = []
+    for name, items in by_language.items():
         subs = [c.get("subscriber_count") or 0 for c in items]
         dens = [c.get("density_score") or 0 for c in items]
         proven_n = sum(1 for c in items if is_proven(c))
         top = sorted(items, key=lambda c: (c.get("proven_video_count") or 0), reverse=True)[:3]
-        markets.append({
-            "market": name,
+        languages.append({
+            "language": name,
             "channels": len(items),
             "proven": proven_n,
             "watchlist": len(items) - proven_n,
@@ -335,8 +313,8 @@ def api_stats():
             } for c in top],
         })
 
-    markets.sort(key=lambda m: (m["proven"], m["channels"]), reverse=True)
-    return jsonify({"totals": totals, "markets": markets})
+    languages.sort(key=lambda m: (m["proven"], m["channels"]), reverse=True)
+    return jsonify({"totals": totals, "languages": languages})
 
 
 if __name__ == "__main__":

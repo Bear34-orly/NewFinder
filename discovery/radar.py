@@ -1,26 +1,26 @@
 """
-Radar : découverte de chaînes par les vidéos fortes des 60 derniers jours, SANS mot-clé.
+Radar : découverte de chaînes faceless nouvelles qui explosent, par les vidéos fortes des 90 derniers
+jours, SANS mot-clé et SANS marché.
 
 Le radar explore YouTube catégorie par catégorie, par petites tranches de dates ("cases"),
 dans l'ordre des vues décroissantes, et descend tant que les vidéos ont encore au moins
-MIN_VIEWS vues. Il se souvient des cases déjà explorées (table radar_cells) : chaque passage
-reprend là où le précédent s'est arrêté (limite de quota), puis revisite les cases récentes
-(les vues continuent de monter).
+MIN_VIEWS vues. Il se souvient des cases déjà explorées (table radar_cells, une carte par langue) :
+chaque passage reprend là où le précédent s'est arrêté (limite de quota), puis revisite les cases
+récentes (les vues continuent de monter).
 
-Les chaînes trouvées passent par les MÊMES critères que la découverte habituelle
-(<= 100K abonnés, langue, faceless, activité, vidéos fortes), plus une règle : une chaîne est
-rejetée si elle a une vidéo >= MIN_VIEWS vues publiée il y a plus de MAX_STRONG_AGE_DAYS jours.
-
-Les chaînes retenues sont classées dans un marché (ou "radar" si on ne sait pas), enregistrées
-avec leurs titres, et le moteur de mots-clés en tire des mots-clés "radar" (piste séparée).
+Critères d'une chaîne (voir config/radar_settings.py) :
+  1. au moins 1 vidéo à 100 000 vues ou plus (pas de maximum) ;
+  2. au moins 3 vidéos publiées ;
+  3. une vidéo publiée il y a moins de 7 jours ;
+  4. aucune vidéo de plus de 90 jours (3 mois) ;
+  5. aucune limite d'abonnés ; filtre faceless inchangé.
 
 Usage :
-    python -m discovery.radar                  (un passage, budget de recherche = SEARCH_BUDGET_UNITS)
-    python -m discovery.radar --budget 3000    (budget de recherche plus petit pour ce passage)
-    python -m discovery.radar --dry-run        (montre le plan sans rien appeler ni enregistrer)
-    python -m discovery.radar --status         (état de la carte : cases terminées, ouvertes...)
-    python -m discovery.radar --reclassify     (range les chaînes restées dans 'radar' dans un vrai marché)
-    python -m discovery.radar --reclassify-all (revoit aussi les chaînes déjà rangées)
+    python -m discovery.radar                      (un passage, langue par défaut)
+    python -m discovery.radar --language fr        (un passage en français : en, es, fr, de, ru)
+    python -m discovery.radar --budget 3000        (budget de recherche plus petit pour ce passage)
+    python -m discovery.radar --dry-run            (montre le plan sans rien appeler ni enregistrer)
+    python -m discovery.radar --status             (état de la carte : cases terminées, ouvertes...)
 """
 
 import argparse
@@ -40,6 +40,8 @@ load_dotenv()
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 CATEGORIES_URL = "https://www.googleapis.com/youtube/v3/videoCategories"
 SEARCH_COST = 100
+
+LANGUAGE = cfg.LANGUAGE        # langue du passage en cours (voir run)
 
 ANCHOR = date(2024, 1, 1)           # les tranches sont alignées sur cette date : elles ne bougent jamais d'un jour à l'autre
 
@@ -113,25 +115,26 @@ def build_slices(today: date) -> list:
     return slices
 
 
-def cell_key(category: str, duration: str, start, end) -> tuple:
-    return (str(category), duration, str(start), str(end))
+def cell_key(language: str, category: str, duration: str, start, end) -> tuple:
+    return (language, str(category), duration, str(start), str(end))
 
 
-def merge_cells(saved: list, slices: list, categories: list) -> tuple:
+def merge_cells(saved: list, slices: list, categories: list, language: str | None = None) -> tuple:
     """
     Fusionne les cases enregistrées et les cases attendues.
     Retourne ({clé: case}, [cases nouvelles à créer]).
     """
+    language = language or LANGUAGE
     cells = {}
     for c in saved:
-        cells[cell_key(c["category"], c["duration"], c["slice_start"], c["slice_end"])] = dict(c)
+        cells[cell_key(c.get("language") or language, c["category"], c["duration"], c["slice_start"], c["slice_end"])] = dict(c)
     new = []
     for (start, end) in slices:
         for cat in categories:
             for dur in cfg.DURATIONS:
-                key = cell_key(cat, dur, start, end)
+                key = cell_key(language, cat, dur, start, end)
                 if key not in cells:
-                    cells[key] = {"category": str(cat), "duration": dur, "slice_start": str(start),
+                    cells[key] = {"language": language, "category": str(cat), "duration": dur, "slice_start": str(start),
                                   "slice_end": str(end), "state": "open", "pages_done": 0, "page_token": None,
                                   "videos_seen": 0, "videos_qualifying": 0, "created_at": None,
                                   "finished_at": None, "last_run_at": None}
@@ -213,7 +216,8 @@ def _save_cell(cell: dict, dry: bool = False):
     if dry:
         return
     if _PENDING is not None:
-        _PENDING[cell_key(cell["category"], cell["duration"], cell["slice_start"], cell["slice_end"])] = dict(cell)
+        _PENDING[cell_key(cell.get("language") or LANGUAGE, cell["category"], cell["duration"],
+                          cell["slice_start"], cell["slice_end"])] = dict(cell)
         return
     from discovery.database import radar_save_cell
     radar_save_cell(cell)
@@ -273,7 +277,7 @@ def explore_cell(cell: dict, now: datetime, budget: dict, collected: dict, stats
             "part": "snippet", "type": "video", "order": "viewCount",
             "publishedAfter": _rfc3339(after), "publishedBefore": _rfc3339(before),
             "videoCategoryId": cell["category"], "videoDuration": cell["duration"],
-            "relevanceLanguage": cfg.LANGUAGE, "safeSearch": "moderate", "maxResults": 50,
+            "relevanceLanguage": cell.get("language") or LANGUAGE, "safeSearch": "moderate", "maxResults": 50,
         }
         if cell.get("page_token"):
             params["pageToken"] = cell["page_token"]
@@ -341,7 +345,8 @@ def explore_cell(cell: dict, now: datetime, budget: dict, collected: dict, stats
                 mid = start_d + timedelta(days=max(1, length // 2))
                 children = []
                 for (a, b) in ((start_d, mid), (mid, end_d)):
-                    child = {"category": cell["category"], "duration": cell["duration"],
+                    child = {"language": cell.get("language") or LANGUAGE,
+                             "category": cell["category"], "duration": cell["duration"],
                              "slice_start": str(a), "slice_end": str(b), "state": "open", "pages_done": 0,
                              "page_token": None, "videos_seen": 0, "videos_qualifying": 0,
                              "created_at": None, "finished_at": None, "last_run_at": None}
@@ -363,7 +368,7 @@ def explore_cell(cell: dict, now: datetime, budget: dict, collected: dict, stats
 
 
 # ---------------------------------------------------------------------------
-# Marché d'une chaîne
+# Chaînes hors cible (musique et enfants)
 # ---------------------------------------------------------------------------
 
 _OFF_TARGET_RE = None
@@ -378,73 +383,6 @@ def is_off_target(*texts) -> bool:
         parts = [re.escape(w) for w in cfg.OFF_TARGET_WORDS] + [re.escape(p) for p in cfg.OFF_TARGET_PHRASES]
         _OFF_TARGET_RE = re.compile(r"(?<!\w)(?:" + "|".join(parts) + r")(?!\w)", re.IGNORECASE)
     return any(t and _OFF_TARGET_RE.search(t) for t in texts)
-
-
-def build_market_vocabularies() -> tuple:
-    """
-    ({marché: mots}, mots partagés par 3 marchés ou plus, ignorés pour le classement).
-    Vocabulaire d'un marché = ses mots-clés de départ + les mots qui reviennent dans les titres
-    des chaînes que le site a DÉJÀ classées dans ce marché (le vocabulaire grandit avec la base).
-    """
-    from config.markets import MARKETS
-    from discovery.database import load_market_corpus
-    from discovery.keyword_engine import _useful_words, market_vocabulary
-
-    vocabs = {m: set(market_vocabulary(m, cfg.LANGUAGE, [])) for m in MARKETS}
-
-    try:
-        corpus = load_market_corpus(cfg.LANGUAGE)
-    except Exception as e:                                    # la base est facultative pour le classement
-        print(f"  (vocabulaire appris ignoré : {type(e).__name__}: {e})")
-        corpus = []
-    channels_of_word = {}                                     # (marché, mot) -> chaînes
-    size = {}                                                 # marché -> nombre de chaînes dans le corpus
-    for r in corpus:
-        if r["market"] not in vocabs:
-            continue
-        size.setdefault(r["market"], set()).add(r["channel_id"])
-        for w in set(_useful_words(r["title"], cfg.LANGUAGE)):
-            channels_of_word.setdefault((r["market"], w), set()).add(r["channel_id"])
-    # Un mot est "appris" pour un marché seulement s'il lui est vraiment PROPRE : on compare la part
-    # de chaînes qui l'emploient dans chaque marché (un gros marché ne gagne pas juste parce qu'il est gros).
-    rate = {}
-    for (m, w), chans in channels_of_word.items():
-        rate.setdefault(w, {})[m] = len(chans) / max(1, len(size[m]))
-    for (m, w), chans in channels_of_word.items():
-        if len(chans) < cfg.LEARN_VOCAB_MIN_CHANNELS:
-            continue
-        if rate[w][m] / sum(rate[w].values()) >= cfg.LEARN_VOCAB_MIN_SHARE:
-            vocabs[m].add(w)
-
-    counts = Counter(w for words in vocabs.values() for w in words)
-    shared = {w for w, n in counts.items() if n >= 3}
-    return {m: words - shared for m, words in vocabs.items()}, shared
-
-
-def classify_market(titles: list, vocabs: dict, hint_market: str | None = None) -> str:
-    """
-    Marché dont le vocabulaire apparaît le plus dans les titres ; 'radar' si on ne sait pas.
-    hint_market : marché suggéré par la catégorie YouTube (donne un point en plus).
-    """
-    from discovery.keyword_engine import _useful_words
-
-    words = set()
-    for t in titles:
-        words.update(_useful_words(t or "", cfg.LANGUAGE))
-    scored = []
-    for m, v in vocabs.items():
-        score = len(v & words)
-        if hint_market == m and score > 0:                    # le coup de pouce ne crée jamais un marché seul
-            score += cfg.CATEGORY_HINT_BONUS
-        scored.append((score, m))
-    scored.sort(reverse=True)
-    if not scored:
-        return cfg.UNCLASSIFIED_MARKET
-    best, market = scored[0]
-    second = scored[1][0] if len(scored) > 1 else 0
-    if best >= cfg.MIN_MARKET_WORDS and best > second:
-        return market
-    return cfg.UNCLASSIFIED_MARKET
 
 
 # ---------------------------------------------------------------------------
@@ -480,42 +418,38 @@ def process_videos(videos: list, funnel: dict) -> tuple:
     funnel["off_target"] = len(fresh) - len(kept)
     fresh = kept
 
-    print("\nStats de chaîne (abonnés)...")
-    with_channels = cs.enrich_with_channel_data(fresh, "", max_subscribers=100_000)
-    funnel["small_channels"] = len(with_channels)
+    print("\nStats de chaîne (abonnés, playlist)...")
+    with_channels = cs.enrich_with_channel_data(fresh, "", max_subscribers=None)     # plus de limite d'abonnés
+    funnel["with_stats"] = len(with_channels)
     kept = [v for v in with_channels if not is_off_target((v.get("channel_description") or "")[:300])]
     funnel["off_target"] += len(with_channels) - len(kept)
     with_channels = kept
 
     lang_filtered = [v for v in filter_and_prioritize_by_language(with_channels)
-                     if v.get("detected_language") == cfg.LANGUAGE]
+                     if v.get("detected_language") == LANGUAGE]
     funnel["language_ok"] = len(lang_filtered)
 
     candidates = pre_filter_faceless(lang_filtered)
     funnel["faceless_text_ok"] = len(candidates)
 
-    # Ordre de test : 1) chaînes créées récemment (elles passent forcément la règle d'âge),
-    # 2) puis les moins vues d'abord. La limite coupe la fin de la liste.
-    recent_limit = datetime.now(timezone.utc) - timedelta(days=cfg.RECENT_CHANNEL_DAYS)
-
-    def _is_recent(v):
-        created = _parse_iso(v.get("channel_created_at"))
-        return created is not None and created >= recent_limit
-
-    funnel["recent_channels"] = sum(1 for v in candidates if _is_recent(v))
-    candidates.sort(key=lambda v: (not _is_recent(v), v["view_count"]))
+    # Ordre de test : les vidéos fortes les plus récentes d'abord (ce qui explose en ce moment).
+    # La limite coupe la fin de la liste.
+    candidates.sort(key=lambda v: v.get("published_at") or "", reverse=True)
     candidates = candidates[:cfg.MAX_CHANNELS_TO_VALIDATE]
     funnel["to_validate"] = len(candidates)
 
-    print(f"\nValidation de l'activité ({len(candidates)} chaînes, règle des {cfg.MAX_STRONG_AGE_DAYS} jours)...")
+    print(f"\nValidation des chaînes ({len(candidates)} chaînes : >= {cfg.MIN_STRONG_VIDEOS} vidéo(s) à "
+          f"{cfg.MIN_VIEWS:,} vues, >= {cfg.MIN_VIDEOS} vidéos, active < {cfg.ACTIVE_WITHIN_DAYS} jours, "
+          f"aucune vidéo de plus de {cfg.MAX_VIDEO_AGE_DAYS} jours)...")
     validated = []
     statuses = Counter()
     quota_stopped = False
     for i, channel in enumerate(candidates, 1):
         print(f"  [{i}/{len(candidates)}] {channel['channel_title']}...", end=" ")
         try:
-            result = ca.validate_channel_activity(channel, "", strong_max_age_days=cfg.MAX_STRONG_AGE_DAYS,
-                                                  strong_min_views=cfg.MIN_VIEWS)
+            result = ca.validate_new_channel(
+                channel, max_age_days=cfg.MAX_VIDEO_AGE_DAYS, active_days=cfg.ACTIVE_WITHIN_DAYS,
+                min_videos=cfg.MIN_VIDEOS, min_views=cfg.MIN_VIEWS, min_strong_videos=cfg.MIN_STRONG_VIDEOS)
         except QuotaExhaustedError:
             print("\n  [!] Toutes les clés sont épuisées : arrêt de la validation.")
             quota_stopped = True
@@ -538,26 +472,17 @@ def process_videos(videos: list, funnel: dict) -> tuple:
 
     funnel["statuses"] = dict(statuses)
     funnel["validated"] = len(validated)
-    validated.sort(key=lambda v: (v["channel_status"] != "PROVEN", -v["density_score"]))
+    validated.sort(key=lambda v: (-v["proven_video_count"], -v["density_score"]))
     return validated, quota_stopped
 
 
-def save_by_market(validated: list) -> dict:
-    """Classe chaque chaîne dans un marché et l'enregistre. Retourne {marché: [chaînes]}."""
+def save_channels(validated: list) -> None:
+    """Enregistre les chaînes validées (toutes sous le même nom : il n'y a plus de marchés)."""
     from discovery.database import save_validated_channels
 
-    vocabs, _ = build_market_vocabularies()
-    groups = {}
     for ch in validated:
-        titles = [ch.get("title")] + [v.get("title") for v in (ch.get("strong_videos") or [])] \
-                 + [v.get("title") for v in (ch.get("proven_videos") or [])] + [ch.get("channel_title")]
-        hint = cfg.CATEGORY_MARKET_HINT.get(str(ch.get("category")))
-        market = classify_market([t for t in titles if t], vocabs, hint)
         ch["query_source"] = "radar"
-        groups.setdefault(market, []).append(ch)
-    for market, chs in groups.items():
-        save_validated_channels(chs, market=market)
-    return groups
+    save_validated_channels(validated, market=cfg.MARKET_LABEL)
 
 
 # ---------------------------------------------------------------------------
@@ -577,17 +502,20 @@ def _print_plan(work: list, budget_calls: int, categories: list):
     print(f"  Au minimum {covered} case(s) seront touchées dans ce passage.")
 
 
-def run(budget_units: int | None = None, dry_run: bool = False) -> None:
+def run(budget_units: int | None = None, dry_run: bool = False, language: str | None = None) -> None:
     import discovery.channel_activity as ca
     import discovery.channel_stats as cs
     import discovery.video_stats as vs
     from discovery.database import radar_load_cells
 
+    global LANGUAGE
+    LANGUAGE = language or cfg.LANGUAGE
+
     now = datetime.now(timezone.utc)
     budget_units = cfg.SEARCH_BUDGET_UNITS if budget_units is None else budget_units
     budget_calls = max(0, budget_units // SEARCH_COST)
 
-    print(f"{'#' * 60}\n# RADAR (langue : {cfg.LANGUAGE}) — {now:%Y-%m-%d %H:%M} UTC\n{'#' * 60}\n")
+    print(f"{'#' * 60}\n# RADAR (langue : {LANGUAGE}) — {now:%Y-%m-%d %H:%M} UTC\n{'#' * 60}\n")
 
     global _COUNTER, _PENDING
     counter = UnitCounter()
@@ -608,8 +536,8 @@ def run(budget_units: int | None = None, dry_run: bool = False) -> None:
     try:
         categories = [str(c) for c in cfg.CATEGORIES] if dry_run else valid_categories()
         slices = build_slices(now.date())
-        saved = radar_load_cells()
-        cells, _new = merge_cells(saved, slices, categories)
+        saved = radar_load_cells(LANGUAGE)
+        cells, _new = merge_cells(saved, slices, categories, LANGUAGE)
         work = plan_work(cells, now, categories)
         _print_plan(work, budget_calls, categories)
         if dry_run:
@@ -643,7 +571,6 @@ def run(budget_units: int | None = None, dry_run: bool = False) -> None:
         else:
             print("\nAucune vidéo qualifiante dans ce passage.")
 
-        groups = {}
         if validated:
             print("\nAnalyse des visages sur les miniatures...")
             try:
@@ -651,19 +578,12 @@ def run(budget_units: int | None = None, dry_run: bool = False) -> None:
                 fd.attach_face_scores(validated)
             except ImportError as e:
                 print(f"  (analyse des miniatures ignorée : {e})")
-            groups = save_by_market(validated)
+            save_channels(validated)
         n_cells = _flush_cells()
         print(f"\n{n_cells} case(s) enregistrée(s) dans la carte du radar.")
 
-        created = []
-        try:
-            from discovery.keyword_engine import create_radar_keywords
-            created = create_radar_keywords(cfg.LANGUAGE)
-        except Exception as e:
-            print(f"  (mots-clés radar ignorés : {type(e).__name__}: {e})")
-
         # ---------------- Résumé ----------------
-        print(f"\n{'=' * 60}\nRÉSUMÉ DU RADAR\n{'=' * 60}")
+        print(f"\n{'=' * 60}\nRÉSUMÉ DU RADAR ({LANGUAGE})\n{'=' * 60}")
         print(f"Cases explorées : {stats['cells_done']} terminées, {stats['cells_split']} coupées en deux, "
               f"{stats['cells_saturated']} saturées (1 jour), {stats['pages']} page(s) lue(s).")
         if funnel:
@@ -673,22 +593,19 @@ def run(budget_units: int | None = None, dry_run: bool = False) -> None:
             print(f"  déjà connues ou refusées ........ {funnel['already_known']}")
             print(f"  nouvelles chaînes ............... {funnel['new_channels']}")
             print(f"  écartées (musique / enfants) .... {funnel.get('off_target', 0)}")
-            print(f"  <= 100K abonnés ................. {funnel['small_channels']}")
-            print(f"  langue {cfg.LANGUAGE} ........................ {funnel['language_ok']}")
+            print(f"  langue {LANGUAGE} ........................ {funnel['language_ok']}")
             print(f"  faceless (texte) ................ {funnel['faceless_text_ok']}")
-            print(f"  dont créées il y a < {cfg.RECENT_CHANNEL_DAYS} jours ...... {funnel.get('recent_channels', 0)}  (testées en premier)")
-            print(f"  validées (activité + règle) ..... {funnel['validated']}  (sur {funnel['to_validate']} testées)")
+            print(f"  validées (nouveaux critères) .... {funnel['validated']}  (sur {funnel['to_validate']} testées)")
             if funnel.get("statuses"):
                 print("  détail des refus : " + ", ".join(f"{k}={v}" for k, v in sorted(funnel["statuses"].items())
                                                           if k != "VALID"))
             print("\nVidéos qualifiantes par catégorie : " + ", ".join(
                 f"{cfg.CATEGORIES.get(c, c)}={n}" for c, n in per_category.most_common()))
-        if groups:
-            print("\nChaînes enregistrées par marché : " + ", ".join(f"{m}={len(c)}" for m, c in sorted(groups.items())))
-        if created:
-            print("\nMots-clés radar créés :")
-            for k in created:
-                print(f"  + [{k['market']}] {k['query']}  ({k['channels']} chaînes radar)")
+        if validated:
+            print(f"\nChaînes enregistrées : {len(validated)}")
+            for ch in validated:
+                print(f"  + {ch['channel_title']}  ({ch['proven_video_count']} vidéo(s) >= {cfg.MIN_VIEWS:,}, "
+                      f"{ch['total_videos_checked']} vidéos, {ch.get('subscriber_count') or '?'} abonnés)")
         print(f"\nQuota dépensé : {counter.units:,} unités "
               f"(dont recherches : {counter.search_units:,}) — appels : "
               + ", ".join(f"{k}={v}" for k, v in sorted(counter.calls.items())))
@@ -704,61 +621,13 @@ def run(budget_units: int | None = None, dry_run: bool = False) -> None:
             mod.youtube_get = orig
 
 
-def reclassify(review_all: bool = False) -> None:
-    """
-    Range dans un vrai marché les chaînes restées dans le marché 'radar', quand le vocabulaire
-    (de départ + appris) le permet. Ne déplace JAMAIS une chaîne qui a déjà un vrai marché
-    (celui-ci peut venir de l'indice de catégorie, que ce calcul n'a plus).
-    review_all=True (--reclassify-all) : revoit aussi les chaînes déjà rangées, et peut les remettre
-    dans 'radar'. Ne supprime rien : les chaînes musique / enfants sont seulement listées pour que tu
-    les supprimes toi-même sur le site.
-    """
-    from discovery.database import list_unclassified_channels, set_channel_market
-
-    vocabs, _ = build_market_vocabularies()
-    chans = list_unclassified_channels(cfg.LANGUAGE)
-    if not review_all:
-        chans = [c for c in chans if c["market"] == cfg.UNCLASSIFIED_MARKET]
-        print(f"{len(chans)} chaîne(s) restée(s) dans le marché 'radar'.")
-    else:
-        print(f"{len(chans)} chaîne(s) trouvée(s) par le radar (toutes revues, même celles déjà rangées).")
-    moved = 0
-    final = Counter()
-    off_target = []
-    for ch in chans:
-        titles = ch["titles"] + [ch.get("best_video_title"), ch.get("channel_title")]
-        titles = [t for t in titles if t]
-        if is_off_target(ch.get("channel_title"), ch.get("best_video_title"), (ch.get("channel_description") or "")[:300]):
-            off_target.append(ch["channel_title"])
-        market = classify_market(titles, vocabs)
-        final[market] += 1
-        if market != ch["market"]:
-            set_channel_market(ch["channel_id"], market)
-            moved += 1
-            print(f"  {ch['channel_title']}: {ch['market']} -> {market}")
-    print(f"\n{moved} chaîne(s) changée(s) de marché.")
-    print("Répartition finale : " + ", ".join(f"{m}={n}" for m, n in sorted(final.items())))
-    if off_target:
-        print("\nChaînes musique / enfants déjà dans la base (à supprimer sur le site si tu n'en veux pas) :")
-        for t in off_target:
-            print(f"  - {t}")
-    try:
-        from discovery.keyword_engine import create_radar_keywords
-        created = create_radar_keywords(cfg.LANGUAGE)
-        if created:
-            print("\nMots-clés radar créés :")
-            for k in created:
-                print(f"  + [{k['market']}] {k['query']}  ({k['channels']} chaînes radar)")
-    except Exception as e:
-        print(f"  (mots-clés radar ignorés : {type(e).__name__}: {e})")
-
-
-def print_status() -> None:
+def print_status(language: str | None = None) -> None:
     from discovery.database import radar_load_cells
 
+    language = language or cfg.LANGUAGE
     now = datetime.now(timezone.utc)
     categories = [str(c) for c in cfg.CATEGORIES]
-    cells, new = merge_cells(radar_load_cells(), build_slices(now.date()), categories)
+    cells, new = merge_cells(radar_load_cells(language), build_slices(now.date()), categories, language)
     window_start = (now - timedelta(days=cfg.WINDOW_DAYS)).date()
     live = [c for c in cells.values()
             if date.fromisoformat(c["slice_end"]) > window_start and c["state"] != "split"
@@ -766,7 +635,7 @@ def print_status() -> None:
     states = Counter(c["state"] for c in live)
     total = len(live)
     done = states.get("done", 0)
-    print(f"Cases de la fenêtre de {cfg.WINDOW_DAYS} jours : {total}")
+    print(f"Langue {language} : cases de la fenêtre de {cfg.WINDOW_DAYS} jours : {total}")
     print(f"  terminées : {done} ({done / total:.0%})" if total else "  aucune")
     print(f"  ouvertes (à explorer ou à reprendre) : {states.get('open', 0)}")
     started = sum(1 for c in live if c["state"] == "open" and (c["pages_done"] or 0) > 0)
@@ -790,21 +659,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Radar : vidéos fortes sans mot-clé, par catégorie.")
     parser.add_argument("--budget", type=int, default=None,
                         help=f"budget de recherche en unités pour ce passage (défaut : {cfg.SEARCH_BUDGET_UNITS})")
+    parser.add_argument("--language", default=cfg.LANGUAGE, choices=cfg.LANGUAGES,
+                        help=f"langue du passage (défaut : {cfg.LANGUAGE})")
     parser.add_argument("--dry-run", action="store_true", help="montre le plan sans appeler YouTube ni écrire")
     parser.add_argument("--status", action="store_true", help="montre l'état de la carte")
-    parser.add_argument("--reclassify", action="store_true",
-                        help="range dans un vrai marché les chaînes restées dans 'radar' (sans appeler YouTube)")
-    parser.add_argument("--reclassify-all", action="store_true",
-                        help="revoit TOUTES les chaînes du radar, même celles déjà rangées (peut les remettre dans 'radar')")
     args = parser.parse_args()
 
     if args.status:
-        print_status()
-    elif args.reclassify or args.reclassify_all:
-        reclassify(review_all=args.reclassify_all)
+        print_status(args.language)
     else:
         if not args.dry_run and not has_keys():
             raise SystemExit("Aucune clé API trouvée : renseigne YOUTUBE_API_KEYS (ou YOUTUBE_API_KEY) dans .env.")
         if not args.dry_run:
             print(f"{key_count()} clé(s) API chargée(s).")
-        run(args.budget, args.dry_run)
+        run(args.budget, args.dry_run, args.language)
