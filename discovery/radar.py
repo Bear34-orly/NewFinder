@@ -389,8 +389,10 @@ def is_off_target(*texts) -> bool:
 # Des vidéos aux chaînes validées
 # ---------------------------------------------------------------------------
 
-def process_videos(videos: list, funnel: dict) -> tuple:
-    """Applique les critères de chaînes. Retourne (chaînes validées, quota_épuisé)."""
+def process_videos(videos: list, funnel: dict, on_batch=None) -> tuple:
+    """Applique les critères de chaînes. Retourne (chaînes validées, quota_épuisé).
+
+    on_batch(liste) est appelée toutes les SAVE_EVERY chaînes validées (et à la fin) pour les enregistrer."""
     import discovery.channel_activity as ca
     import discovery.channel_stats as cs
     from discovery.database import existing_channel_ids, list_rejected_ids
@@ -435,13 +437,15 @@ def process_videos(videos: list, funnel: dict) -> tuple:
     # Ordre de test : les vidéos fortes les plus récentes d'abord (ce qui explose en ce moment).
     # La limite coupe la fin de la liste.
     candidates.sort(key=lambda v: v.get("published_at") or "", reverse=True)
-    candidates = candidates[:cfg.MAX_CHANNELS_TO_VALIDATE]
+    if cfg.MAX_CHANNELS_TO_VALIDATE is not None:
+        candidates = candidates[:cfg.MAX_CHANNELS_TO_VALIDATE]
     funnel["to_validate"] = len(candidates)
 
     print(f"\nValidation des chaînes ({len(candidates)} chaînes : >= {cfg.MIN_STRONG_VIDEOS} vidéo(s) à "
           f"{cfg.MIN_VIEWS:,} vues, >= {cfg.MIN_VIDEOS} vidéos, active < {cfg.ACTIVE_WITHIN_DAYS} jours, "
           f"aucune vidéo de plus de {cfg.MAX_VIDEO_AGE_DAYS} jours)...")
     validated = []
+    pending = []
     statuses = Counter()
     quota_stopped = False
     for i, channel in enumerate(candidates, 1):
@@ -469,11 +473,28 @@ def process_videos(videos: list, funnel: dict) -> tuple:
         result["density_score"] = result["strong_video_count"] / result["total_videos_checked"]
         result["channel_url"] = f"https://www.youtube.com/channel/{result['channel_id']}"
         validated.append(result)
+        pending.append(result)
+        if on_batch and len(pending) >= cfg.SAVE_EVERY:
+            on_batch(pending)
+            pending = []
 
+    if on_batch and pending:
+        on_batch(pending)
     funnel["statuses"] = dict(statuses)
     funnel["validated"] = len(validated)
     validated.sort(key=lambda v: (-v["proven_video_count"], -v["density_score"]))
     return validated, quota_stopped
+
+
+def save_batch(batch: list) -> None:
+    """Analyse des visages sur les miniatures, puis enregistrement d'un paquet de chaînes validées."""
+    print(f"\n  --- Enregistrement de {len(batch)} chaîne(s) validée(s) ---")
+    try:
+        import discovery.face_detect as fd
+        fd.attach_face_scores(batch)
+    except ImportError as e:
+        print(f"  (analyse des miniatures ignorée : {e})")
+    save_channels(batch)
 
 
 def save_channels(validated: list) -> None:
@@ -566,19 +587,11 @@ def run(budget_units: int | None = None, dry_run: bool = False, language: str | 
         funnel = {}
         validated, q2 = ([], False)
         if videos:
-            validated, q2 = process_videos(videos, funnel)
+            validated, q2 = process_videos(videos, funnel, on_batch=save_batch)
             quota_stopped = quota_stopped or q2
         else:
             print("\nAucune vidéo qualifiante dans ce passage.")
 
-        if validated:
-            print("\nAnalyse des visages sur les miniatures...")
-            try:
-                import discovery.face_detect as fd
-                fd.attach_face_scores(validated)
-            except ImportError as e:
-                print(f"  (analyse des miniatures ignorée : {e})")
-            save_channels(validated)
         n_cells = _flush_cells()
         print(f"\n{n_cells} case(s) enregistrée(s) dans la carte du radar.")
 

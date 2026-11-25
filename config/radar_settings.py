@@ -55,7 +55,8 @@ ACTIVE_WITHIN_DAYS = 7          # sa vidéo la plus récente doit avoir moins de
 MAX_VIDEO_AGE_DAYS = 90         # la chaîne est rejetée si elle a UNE vidéo de plus de 90 jours (3 mois)
 # Il n'y a plus de limite d'abonnés.
 
-MAX_CHANNELS_TO_VALIDATE = 150  # nombre maximum de chaînes validées par passage (les plus récentes d'abord)
+MAX_CHANNELS_TO_VALIDATE = None  # None = AUCUNE limite : toutes les chaînes trouvées sont validées (les plus récentes d'abord)
+SAVE_EVERY = 25                 # les chaînes validées sont enregistrées par paquets de 25 (rien n'est perdu si le robot s'arrête)
 
 # ---------- Revisite des cases (les vues continuent de monter) ----------
 
